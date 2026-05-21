@@ -1,0 +1,2158 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RAG — Теория Графов</title>
+  <style>
+    /* ===================================================================
+       CSS Variables — современная тёмная тема
+       =================================================================== */
+    :root {
+      --bg-primary: #0d1117;
+      --bg-secondary: #161b22;
+      --bg-tertiary: #21262d;
+      --accent: #58a6ff;
+      --accent-hover: #79c0ff;
+      --success: #3fb950;
+      --error: #f85149;
+      --warning: #d29922;
+      --text-primary: #c9d1d9;
+      --text-secondary: #8b949e;
+      --border: #30363d;
+      --radius: 10px;
+      --radius-lg: 14px;
+      --transition: 0.25s ease;
+      --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
+      --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+      --shadow-lg: 0 8px 24px rgba(0,0,0,0.5);
+    }
+
+    /* ===================================================================
+       Reset & Base
+       =================================================================== */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ===================================================================
+       Animations
+       =================================================================== */
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%      { opacity: 0.5; transform: scale(0.95); }
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 0.3; transform: scale(1); }
+      50%      { opacity: 1; transform: scale(1.2); }
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    @keyframes shimmer {
+      0%   { background-position: -200% 0; }
+      100% { background-position: 200% 0; }
+    }
+
+    @keyframes scaleIn {
+      from { opacity: 0; transform: scale(0.92); }
+      to   { opacity: 1; transform: scale(1); }
+    }
+
+    .anim-fadeIn  { animation: fadeIn 0.35s ease both; }
+    .anim-slideUp { animation: slideUp 0.4s ease both; }
+    .anim-scaleIn { animation: scaleIn 0.3s ease both; }
+
+    /* ===================================================================
+       Header
+       =================================================================== */
+    header {
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .logo {
+      width: 38px; height: 38px;
+      background: linear-gradient(135deg, var(--accent), #7c5ef7);
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; font-weight: 700; color: #fff;
+      flex-shrink: 0;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .header-info { flex: 1; min-width: 0; }
+    .header-info h1 {
+      font-size: 17px; font-weight: 600;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .header-info .subtitle {
+      display: block;
+      font-size: 12px; color: var(--text-secondary); font-weight: 400;
+    }
+
+    .status-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: var(--text-secondary);
+      flex-shrink: 0;
+      position: relative;
+      transition: background var(--transition);
+    }
+    .status-dot::after {
+      content: '';
+      position: absolute; inset: -4px;
+      border-radius: 50%;
+      border: 2px solid transparent;
+      transition: border-color var(--transition);
+    }
+    .status-dot.online       { background: var(--success); }
+    .status-dot.online::after { border-color: rgba(63,185,80,0.3); }
+    .status-dot.offline      { background: var(--error); }
+    .status-dot.offline::after { border-color: rgba(248,81,73,0.3); }
+
+    /* ===================================================================
+       Tabs
+       =================================================================== */
+    .tabs {
+      display: flex;
+      gap: 6px;
+      padding: 12px 24px;
+      background: var(--bg-secondary);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .tab {
+      padding: 9px 22px;
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--text-secondary);
+      transition: all var(--transition);
+      user-select: none;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .tab:hover:not(.active) {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      border-color: var(--border);
+    }
+    .tab.active {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+      box-shadow: 0 0 12px rgba(88,166,255,0.25);
+    }
+
+    /* ===================================================================
+       Main layout
+       =================================================================== */
+    main {
+      flex: 1;
+      display: flex;
+      padding: 20px 24px;
+      gap: 20px;
+      max-width: 1200px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    .panel {
+      display: none;
+      flex: 1;
+      flex-direction: row;
+      gap: 20px;
+      animation: fadeIn 0.3s ease;
+    }
+    .panel.active { display: flex; }
+
+    .panel-main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      min-width: 0;
+    }
+
+    /* ===================================================================
+       Sidebar
+       =================================================================== */
+    .sidebar {
+      width: 230px;
+      flex-shrink: 0;
+    }
+    .sidebar-card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 16px;
+      max-height: 520px;
+      overflow-y: auto;
+      position: sticky;
+      top: 90px;
+    }
+    .sidebar-card h3 {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--text-secondary);
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    .term-chip {
+      display: block;
+      padding: 7px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.15s;
+      color: var(--text-primary);
+      border-left: 2px solid transparent;
+    }
+    .term-chip:hover {
+      background: var(--bg-tertiary);
+      color: var(--accent);
+      border-left-color: var(--accent);
+    }
+    .term-chip + .term-chip { margin-top: 2px; }
+
+    .sidebar-card::-webkit-scrollbar { width: 4px; }
+    .sidebar-card::-webkit-scrollbar-track { background: transparent; }
+    .sidebar-card::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    /* ===================================================================
+       Chat
+       =================================================================== */
+    .chat-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+
+    .chat-box {
+      flex: 1;
+      padding: 20px;
+      overflow-y: auto;
+      min-height: 380px;
+      max-height: 520px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      scroll-behavior: smooth;
+    }
+    .chat-box::-webkit-scrollbar { width: 5px; }
+    .chat-box::-webkit-scrollbar-track { background: transparent; }
+    .chat-box::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    .msg {
+      display: flex;
+      gap: 12px;
+      animation: fadeIn 0.3s ease both;
+    }
+    .msg.user { flex-direction: row-reverse; }
+    .msg + .msg { margin-top: 2px; }
+
+    .msg-avatar {
+      width: 34px; height: 34px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 15px; flex-shrink: 0;
+      box-shadow: var(--shadow-sm);
+    }
+    .msg.bot .msg-avatar {
+      background: linear-gradient(135deg, var(--accent), #7c5ef7);
+    }
+    .msg.user .msg-avatar {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+    }
+
+    .msg-content {
+      max-width: 78%;
+      min-width: 60px;
+    }
+    .msg-bubble {
+      padding: 12px 16px;
+      border-radius: var(--radius);
+      font-size: 14px;
+      line-height: 1.65;
+      word-wrap: break-word;
+      position: relative;
+    }
+    .msg.bot .msg-bubble {
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+    }
+    .msg.user .msg-bubble {
+      background: var(--accent);
+      color: #fff;
+      border-bottom-right-radius: 4px;
+    }
+
+    /* typewriter cursor */
+    .typewriter-cursor::after {
+      content: '|';
+      display: inline;
+      animation: pulse 1s infinite;
+      color: var(--accent);
+      margin-left: 1px;
+    }
+
+    /* waiting dots */
+    .waiting-dots {
+      display: flex;
+      gap: 5px;
+      align-items: center;
+      padding: 6px 0;
+    }
+    .waiting-dots span {
+      width: 8px; height: 8px;
+      background: var(--text-secondary);
+      border-radius: 50%;
+      animation: pulse-dot 1.2s ease-in-out infinite;
+    }
+    .waiting-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .waiting-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+    /* copy button */
+    .copy-btn {
+      position: absolute;
+      top: 8px; right: 8px;
+      width: 28px; height: 28px;
+      border-radius: 6px;
+      border: none;
+      background: var(--bg-secondary);
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      transition: all var(--transition);
+    }
+    .msg-bubble:hover .copy-btn { opacity: 1; }
+    .copy-btn:hover {
+      background: var(--bg-tertiary);
+      color: var(--accent);
+    }
+    .copy-btn.copied {
+      opacity: 1;
+      background: var(--success);
+      color: #fff;
+    }
+
+    .msg-score {
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-top: 6px;
+    }
+
+    .sources { margin-top: 10px; }
+    .sources summary {
+      font-size: 12px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      padding: 4px 0;
+      user-select: none;
+    }
+    .sources summary:hover { color: var(--accent); }
+    .source-item {
+      font-size: 12px;
+      color: var(--text-secondary);
+      padding: 8px 12px;
+      background: var(--bg-primary);
+      border-radius: 6px;
+      margin-top: 4px;
+      border-left: 2px solid var(--accent);
+      line-height: 1.5;
+    }
+    .source-item + .source-item { margin-top: 4px; }
+
+    /* Chat input */
+    .chat-input-row {
+      display: flex;
+      gap: 10px;
+      padding: 14px 16px;
+      border-top: 1px solid var(--border);
+      background: var(--bg-secondary);
+    }
+    .chat-input {
+      flex: 1;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 16px;
+      color: var(--text-primary);
+      font-size: 14px;
+      outline: none;
+      transition: border-color var(--transition);
+    }
+    .chat-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(88,166,255,0.12);
+    }
+    .chat-input::placeholder { color: var(--text-secondary); }
+
+    .btn-send {
+      width: 44px; height: 44px;
+      border-radius: var(--radius);
+      border: none;
+      background: var(--accent);
+      color: #fff;
+      font-size: 18px;
+      cursor: pointer;
+      transition: all var(--transition);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .btn-send:hover { background: var(--accent-hover); }
+    .btn-send:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    /* ===================================================================
+       Trainer / Test
+       =================================================================== */
+    .trainer-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* Stats bar */
+    .stats-bar {
+      display: flex;
+      gap: 16px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 14px 20px;
+      flex-wrap: wrap;
+    }
+    .stat {
+      text-align: center;
+      flex: 1;
+      min-width: 60px;
+    }
+    .stat-value {
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--accent);
+      line-height: 1.2;
+    }
+    .stat-value.success { color: var(--success); }
+    .stat-value.error   { color: var(--error); }
+    .stat-value.warning { color: var(--warning); }
+    .stat-label {
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-top: 2px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    /* Test card */
+    .test-card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 28px;
+      animation: slideUp 0.35s ease both;
+    }
+
+    /* Progress bar */
+    .progress-section {
+      margin-bottom: 20px;
+    }
+    .progress-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+    }
+    .progress-track {
+      height: 6px;
+      background: var(--bg-tertiary);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), var(--accent-hover));
+      border-radius: 3px;
+      transition: width 0.5s ease;
+    }
+
+    /* Type badge */
+    .type-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 5px 14px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+    }
+    .type-badge.definition      { border-color: #58a6ff; color: #58a6ff; }
+    .type-badge.true_false      { border-color: #3fb950; color: #3fb950; }
+    .type-badge.multiple_choice { border-color: #d29922; color: #d29922; }
+    .type-badge.fill_blank      { border-color: #bc8cff; color: #bc8cff; }
+    .type-badge.matching        { border-color: #f78166; color: #f78166; }
+
+    /* Question text */
+    .question-text {
+      font-size: 19px;
+      font-weight: 600;
+      margin-bottom: 22px;
+      line-height: 1.5;
+    }
+
+    /* Answer UI */
+    .answer-textarea {
+      width: 100%;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 18px;
+      color: var(--text-primary);
+      font-size: 14px;
+      outline: none;
+      resize: vertical;
+      min-height: 110px;
+      font-family: inherit;
+      transition: border-color var(--transition);
+    }
+    .answer-textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(88,166,255,0.12);
+    }
+
+    .answer-input {
+      width: 100%;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 13px 16px;
+      color: var(--text-primary);
+      font-size: 14px;
+      outline: none;
+      font-family: inherit;
+      transition: border-color var(--transition);
+    }
+    .answer-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(88,166,255,0.12);
+    }
+
+    /* True/False toggle buttons */
+    .tf-group {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 4px;
+    }
+    .tf-btn {
+      flex: 1;
+      padding: 14px 20px;
+      border-radius: var(--radius);
+      border: 2px solid var(--border);
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all var(--transition);
+      text-align: center;
+    }
+    .tf-btn:hover { border-color: var(--text-secondary); }
+    .tf-btn.selected-true {
+      border-color: var(--success);
+      background: rgba(63,185,80,0.12);
+      color: var(--success);
+    }
+    .tf-btn.selected-false {
+      border-color: var(--error);
+      background: rgba(248,81,73,0.12);
+      color: var(--error);
+    }
+    .tf-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* Multiple choice */
+    .mc-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .mc-option {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 12px 16px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--bg-tertiary);
+      cursor: pointer;
+      transition: all var(--transition);
+    }
+    .mc-option:hover { border-color: var(--text-secondary); }
+    .mc-option input[type="radio"] {
+      appearance: none;
+      -webkit-appearance: none;
+      width: 18px; height: 18px;
+      border: 2px solid var(--text-secondary);
+      border-radius: 50%;
+      margin-top: 1px;
+      flex-shrink: 0;
+      position: relative;
+      transition: all var(--transition);
+      cursor: pointer;
+    }
+    .mc-option input[type="radio"]:checked {
+      border-color: var(--accent);
+      background: var(--accent);
+      box-shadow: inset 0 0 0 4px var(--bg-tertiary);
+    }
+    .mc-option.selected {
+      border-color: var(--accent);
+      background: rgba(88,166,255,0.08);
+    }
+    .mc-option-text {
+      font-size: 14px;
+      line-height: 1.5;
+      color: var(--text-primary);
+    }
+    .mc-option:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+    .mc-option.correct-answer {
+      border-color: var(--success) !important;
+      background: rgba(63,185,80,0.1) !important;
+    }
+    .mc-option.wrong-answer {
+      border-color: var(--error) !important;
+      background: rgba(248,81,73,0.1) !important;
+    }
+
+    /* Hint for fill_blank */
+    .input-hint {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-top: 6px;
+    }
+
+    /* Buttons */
+    .btn {
+      padding: 11px 24px;
+      border-radius: var(--radius);
+      border: none;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      transition: all var(--transition);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      user-select: none;
+    }
+    .btn:active { transform: scale(0.97); }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+      box-shadow: 0 1px 8px rgba(88,166,255,0.25);
+    }
+    .btn-primary:hover {
+      background: var(--accent-hover);
+      box-shadow: 0 2px 12px rgba(88,166,255,0.35);
+    }
+    .btn-primary:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    .btn-secondary {
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+    }
+    .btn-secondary:hover {
+      border-color: var(--text-secondary);
+      background: var(--bg-secondary);
+    }
+
+    .btn-success {
+      background: var(--success);
+      color: #fff;
+    }
+    .btn-success:hover { filter: brightness(1.12); }
+
+    .btn-outline {
+      background: transparent;
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+    }
+    .btn-outline:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .btn-group {
+      display: flex;
+      gap: 10px;
+      margin-top: 18px;
+      flex-wrap: wrap;
+    }
+
+    /* Result card */
+    .result-card {
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      margin-top: 16px;
+      animation: scaleIn 0.3s ease both;
+    }
+    .result-card.correct {
+      background: rgba(63,185,80,0.08);
+      border: 1px solid var(--success);
+    }
+    .result-card.wrong {
+      background: rgba(248,81,73,0.08);
+      border: 1px solid var(--error);
+    }
+    .result-card .icon {
+      font-size: 20px;
+      margin-right: 8px;
+    }
+    .result-title {
+      font-size: 16px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+    }
+    .result-card.correct .result-title { color: var(--success); }
+    .result-card.wrong .result-title   { color: var(--error); }
+    .result-detail {
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-top: 6px;
+      line-height: 1.5;
+    }
+    .result-correct-answer {
+      font-size: 13px;
+      background: var(--bg-tertiary);
+      padding: 10px 14px;
+      border-radius: 6px;
+      margin-top: 10px;
+      line-height: 1.5;
+      border-left: 3px solid var(--accent);
+    }
+    .result-correct-answer strong {
+      color: var(--accent);
+    }
+
+    /* Results screen */
+    .results-screen {
+      text-align: center;
+      animation: slideUp 0.4s ease both;
+    }
+    .results-score {
+      font-size: 56px;
+      font-weight: 800;
+      line-height: 1;
+      margin: 8px 0;
+    }
+    .results-score.perfect   { color: var(--success); }
+    .results-score.good      { color: var(--accent); }
+    .results-score.average   { color: var(--warning); }
+    .results-score.bad       { color: var(--error); }
+
+    .results-pct {
+      font-size: 18px;
+      color: var(--text-secondary);
+      margin-bottom: 20px;
+    }
+    .results-message {
+      font-size: 15px;
+      color: var(--text-secondary);
+      margin-bottom: 24px;
+    }
+
+    .results-details {
+      text-align: left;
+      margin-top: 20px;
+    }
+    .results-details h4 {
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-secondary);
+      margin-bottom: 12px;
+    }
+    .result-item {
+      display: flex;
+      gap: 12px;
+      padding: 12px 16px;
+      background: var(--bg-tertiary);
+      border-radius: var(--radius);
+      margin-bottom: 8px;
+      border-left: 3px solid var(--border);
+      animation: fadeIn 0.3s ease both;
+    }
+    .result-item.correct { border-left-color: var(--success); }
+    .result-item.wrong   { border-left-color: var(--error); }
+
+    .result-item .mark {
+      font-size: 18px;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+    .result-item .q-number {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-secondary);
+      margin-bottom: 2px;
+    }
+    .result-item .q-type {
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-bottom: 4px;
+    }
+    .result-item .q-text {
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .result-item .q-answer {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+    .result-item .q-answer strong { color: var(--text-primary); }
+    .result-item .q-expected {
+      font-size: 12px;
+      color: var(--success);
+      margin-top: 2px;
+    }
+
+    /* Welcome state */
+    .welcome-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 48px 20px;
+      text-align: center;
+    }
+    .welcome-state .icon { font-size: 48px; }
+    .welcome-state h2 {
+      font-size: 20px;
+      font-weight: 600;
+    }
+    .welcome-state p {
+      color: var(--text-secondary);
+      font-size: 14px;
+      max-width: 360px;
+    }
+
+    /* Loading spinner */
+    .spinner {
+      width: 28px; height: 28px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      margin: 20px auto;
+    }
+
+    /* Hint text */
+    .hint-text {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-top: 8px;
+    }
+
+    /* Empty state */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 40px 20px;
+      color: var(--text-secondary);
+    }
+    .empty-state .icon { font-size: 36px; }
+    .loading-text { color: var(--text-secondary); font-style: italic; font-size: 14px; }
+
+    /* ===================================================================
+       Responsive
+       =================================================================== */
+    @media (max-width: 820px) {
+      main { padding: 14px; gap: 14px; }
+      .panel.active { flex-direction: column; }
+      .sidebar { width: 100%; }
+      .sidebar-card { max-height: none; position: static; }
+      .chat-box { min-height: 280px; max-height: 380px; }
+      .msg-content { max-width: 90%; }
+      header { padding: 12px 16px; }
+      .tabs { padding: 10px 16px; }
+      .tab { padding: 8px 14px; font-size: 13px; }
+      .stats-bar { gap: 8px; padding: 12px 14px; }
+      .stat-value { font-size: 18px; }
+      .test-card { padding: 20px; }
+      .question-text { font-size: 17px; }
+      .results-score { font-size: 42px; }
+      .btn { padding: 10px 18px; font-size: 13px; }
+    }
+
+    @media (max-width: 480px) {
+      .header-info h1 { font-size: 14px; }
+      .tab { font-size: 12px; padding: 7px 12px; }
+      .msg-content { max-width: 95%; }
+      .tf-group { flex-direction: column; }
+      .stats-bar .stat { min-width: 45px; }
+      .results-score { font-size: 36px; }
+    }
+
+    /* ===================================================================
+       Utility
+       =================================================================== */
+    .mt-8  { margin-top: 8px; }
+    .mt-12 { margin-top: 12px; }
+    .mt-16 { margin-top: 16px; }
+    .mb-8  { margin-bottom: 8px; }
+    .gap-8 { gap: 8px; }
+    .flex-center { display: flex; align-items: center; justify-content: center; }
+    .text-center { text-align: center; }
+    .fw-600 { font-weight: 600; }
+    .text-secondary { color: var(--text-secondary); }
+
+    /* word-break for long text */
+    .break-word { word-break: break-word; }
+  </style>
+</head>
+<body>
+
+<!-- ========== HEADER ========== -->
+<header>
+  <div class="logo">G</div>
+  <div class="header-info">
+    <h1>Теория Графов — RAG</h1>
+    <span class="subtitle">Дискретная математика · Поиск по учебнику</span>
+  </div>
+  <div class="status-dot" id="statusDot" title="Проверка подключения..."></div>
+</header>
+
+<!-- ========== TABS ========== -->
+<div class="tabs">
+  <button class="tab active" data-tab="chat" onclick="switchTab('chat')">💬 Чат</button>
+  <button class="tab" data-tab="trainer" onclick="switchTab('trainer')">🧠 Тест</button>
+</div>
+
+<!-- ========== MAIN ========== -->
+<main>
+
+  <!-- ===== CHAT PANEL ===== -->
+  <div class="panel active" id="panel-chat">
+    <div class="panel-main">
+      <div class="chat-container">
+        <div class="chat-box" id="chatBox">
+          <!-- Welcome message -->
+          <div class="msg bot">
+            <div class="msg-avatar">🤖</div>
+            <div class="msg-content">
+              <div class="msg-bubble">
+                Привет! Я помогаю искать ответы в учебнике по теории графов.<br><br>
+                Задайте вопрос — например: <em>«Что такое граф?»</em>, <em>«Как определяется степень вершины?»</em>, <em>«Что такое связный граф?»</em>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="chat-input-row">
+          <input class="chat-input" id="chatInput" placeholder="Задайте вопрос по теории графов..."
+                 onkeydown="if(event.key==='Enter' && !event.shiftKey) { event.preventDefault(); sendQuestion(); }">
+          <button class="btn-send" id="sendBtn" onclick="sendQuestion()" title="Отправить">↵</button>
+        </div>
+      </div>
+    </div>
+    <aside class="sidebar">
+      <div class="sidebar-card">
+        <h3>📖 Термины главы</h3>
+        <div id="termsList"><div class="loading-text">Загрузка...</div></div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- ===== TRAINER PANEL ===== -->
+  <div class="panel" id="panel-trainer">
+    <div class="panel-main">
+      <div class="trainer-container">
+
+        <!-- Stats bar -->
+        <div class="stats-bar" id="statsBar">
+          <div class="stat">
+            <div class="stat-value" id="statTotal">0</div>
+            <div class="stat-label">Тестов</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value success" id="statCorrect">0</div>
+            <div class="stat-label">Верно</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value error" id="statWrong">0</div>
+            <div class="stat-label">Неверно</div>
+          </div>
+          <div class="stat">
+            <div class="stat-value warning" id="statPercent">—</div>
+            <div class="stat-label">% верных</div>
+          </div>
+        </div>
+
+        <!-- Test container -->
+        <div class="test-card" id="testContainer">
+          <!-- Welcome screen (default) -->
+          <div id="testWelcome" class="welcome-state">
+            <div class="icon">🧠</div>
+            <h2>Тест по теории графов</h2>
+            <p>Проверьте свои знания! Тест состоит из 5 вопросов разных типов.</p>
+            <div class="btn-group" style="justify-content:center;">
+              <button class="btn btn-primary btn-lg" onclick="startTest()">Начать тест →</button>
+            </div>
+          </div>
+
+          <!-- Question screen (hidden) -->
+          <div id="testQuestion" style="display:none;">
+            <div class="progress-section">
+              <div class="progress-label">
+                <span id="progressLabel">Вопрос 1 / 5</span>
+                <span id="progressPct">0%</span>
+              </div>
+              <div class="progress-track">
+                <div class="progress-fill" id="progressFill" style="width:0%;"></div>
+              </div>
+            </div>
+            <div>
+              <span class="type-badge" id="questionTypeBadge">📝 Определение</span>
+            </div>
+            <div class="question-text" id="questionText"></div>
+            <div id="answerArea">
+              <!-- Answer UI injected by JS -->
+            </div>
+            <div id="questionResult" style="display:none;"></div>
+            <div class="btn-group" id="questionActions">
+              <button class="btn btn-primary" id="checkAnswerBtn" onclick="submitTestAnswer()">Проверить</button>
+            </div>
+          </div>
+
+          <!-- Results screen (hidden) -->
+          <div id="testResults" style="display:none;"></div>
+        </div>
+
+        <!-- Bottom actions -->
+        <div class="btn-group">
+          <button class="btn btn-secondary" onclick="resetTestStats()">Сбросить статистику</button>
+        </div>
+      </div>
+    </div>
+    <aside class="sidebar">
+      <div class="sidebar-card">
+        <h3>🎯 Выбрать тему</h3>
+        <div id="trainerTermsList"><div class="loading-text">Загрузка...</div></div>
+      </div>
+    </aside>
+  </div>
+
+</main>
+
+<!-- ===================================================================
+     JAVASCRIPT
+     =================================================================== -->
+<script>
+// =======================================================================
+// SESSION MANAGEMENT
+// =======================================================================
+const SESSION_ID = (typeof crypto !== 'undefined' && crypto.randomUUID)
+  ? crypto.randomUUID()
+  : 's-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+
+sessionStorage.setItem('rag_session_id', SESSION_ID);
+
+/**
+ * Обёртка над fetch, которая автоматически добавляет:
+ *   - X-Session-Id
+ *   - Content-Type: application/json
+ *   - Любые кастомные заголовки из options.headers
+ * Возвращает JSON (парсит response).
+ */
+async function apiFetch(url, options = {}) {
+  const headers = {
+    'X-Session-Id': SESSION_ID,
+    'Content-Type': 'application/json',
+    ...options.headers,
+  };
+  const res = await fetch(url, { ...options, headers });
+
+  if (!res.ok) {
+    let errMsg = `HTTP ${res.status}`;
+    try {
+      const errBody = await res.json();
+      if (errBody.error) errMsg = errBody.error;
+    } catch (_) { /* keep default */ }
+    throw new Error(errMsg);
+  }
+
+  // Если ответ пустой — возвращаем null
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
+}
+
+// =======================================================================
+// TAB SWITCHING
+// =======================================================================
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+
+  const tabBtn = document.querySelector(`.tab[data-tab="${name}"]`);
+  if (tabBtn) tabBtn.classList.add('active');
+
+  document.getElementById('panel-' + name).classList.add('active');
+}
+
+// =======================================================================
+// HEALTH CHECK
+// =======================================================================
+async function checkHealth() {
+  const dot = document.getElementById('statusDot');
+  try {
+    const d = await apiFetch(API + '/health');
+    dot.className = 'status-dot online';
+    dot.title = `Подключено · ${d.chunks || '—'} чанков в индексе`;
+  } catch {
+    dot.className = 'status-dot offline';
+    dot.title = 'Нет подключения к серверу';
+  }
+}
+
+// =======================================================================
+// TERMS
+// =======================================================================
+async function loadTerms() {
+  const termsEl = document.getElementById('termsList');
+  const trainerTermsEl = document.getElementById('trainerTermsList');
+
+  try {
+    const d = await apiFetch(API + '/terms');
+    const terms = d.terms || [];
+
+    if (!terms.length) {
+      const msg = '<span style="color:var(--text-secondary);font-size:13px;">Нет терминов</span>';
+      termsEl.innerHTML = msg;
+      trainerTermsEl.innerHTML = msg;
+      return;
+    }
+
+    termsEl.innerHTML = terms.map(t =>
+      `<span class="term-chip" onclick="askAbout('${escHtml(t)}')">${escHtml(t)}</span>`
+    ).join('');
+
+    trainerTermsEl.innerHTML = terms.map(t =>
+      `<span class="term-chip" onclick="startTestWithTerm('${escHtml(t)}')">${escHtml(t)}</span>`
+    ).join('');
+  } catch {
+    const errMsg = '<span style="color:var(--error);font-size:13px;">Ошибка загрузки</span>';
+    termsEl.innerHTML = errMsg;
+    trainerTermsEl.innerHTML = errMsg;
+  }
+}
+
+function askAbout(term) {
+  switchTab('chat');
+  document.getElementById('chatInput').value = 'Что такое ' + term + '?';
+  sendQuestion();
+}
+
+// =======================================================================
+// CHAT
+// =======================================================================
+
+/**
+ * Отправляет вопрос в чат.
+ * Использует новый эндпоинт /api/chat, при ошибке пробует старый /ask.
+ */
+async function sendQuestion() {
+  const input = document.getElementById('chatInput');
+  const question = input.value.trim();
+  if (!question) return;
+
+  // Показываем вопрос пользователя
+  addMsg('user', question);
+
+  // Очищаем поле ввода
+  input.value = '';
+  input.disabled = true;
+
+  const btn = document.getElementById('sendBtn');
+  btn.disabled = true;
+
+  // Показываем индикатор загрузки (пульсирующие точки)
+  const loadingMsgId = 'loading-' + Date.now();
+  addMsg('bot', '<div class="waiting-dots"><span></span><span></span><span></span></div>', loadingMsgId, true);
+
+  try {
+    let d;
+    // Пробуем новый эндпоинт
+    try {
+      d = await apiFetch(API + '/api/chat', {
+        method: 'POST',
+        body: JSON.stringify({ question }),
+      });
+    } catch (_newErr) {
+      // Fallback на старый /ask
+      d = await apiFetch(API + '/ask', {
+        method: 'POST',
+        body: JSON.stringify({ question }),
+      });
+    }
+
+    removeMsgById(loadingMsgId);
+
+    if (d.error) {
+      addMsg('bot', '⚠️ ' + escHtml(d.error));
+    } else {
+      const answerText = d.answer || 'Не удалось найти ответ.';
+
+      // Создаём сообщение бота с typewriter-эффектом
+      const botMsgEl = document.createElement('div');
+      botMsgEl.className = 'msg bot anim-fadeIn';
+
+      const uid = Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+      const bubbleId = 'bubble-' + uid;
+      const twId = 'tw-' + uid;
+      const scoreId = 'score-' + uid;
+      const sourcesId = 'sources-' + uid;
+
+      botMsgEl.innerHTML = `
+        <div class="msg-avatar">🤖</div>
+        <div class="msg-content">
+          <div class="msg-bubble" id="${bubbleId}">
+            <div class="break-word" id="${twId}"></div>
+            <div class="msg-score" id="${scoreId}" style="display:none;"></div>
+            <div id="${sourcesId}" style="display:none;"></div>
+          </div>
+        </div>
+      `;
+      document.getElementById('chatBox').appendChild(botMsgEl);
+
+      const typewriterEl = document.getElementById(twId);
+      const scoreEl = document.getElementById(scoreId);
+      const sourcesEl = document.getElementById(sourcesId);
+
+      // Typewriter effect — печатаем ответ
+      await typewriter(typewriterEl, answerText, 18);
+
+      // После окончания печатания добавляем score
+      if (d.score !== undefined) {
+        const pct = (d.score * 100).toFixed(0);
+        scoreEl.textContent = 'Релевантность: ' + pct + '%';
+        scoreEl.style.display = 'block';
+        scoreEl.style.animation = 'fadeIn 0.3s ease';
+      }
+
+      // Добавляем источники
+      if (d.sources && d.sources.length > 1) {
+        let sourcesHtml = '<details class="sources"><summary>📚 Источники (' + (d.sources.length - 1) + ')</summary>';
+        d.sources.slice(1).forEach(s => {
+          sourcesHtml += `<div class="source-item">${escHtml(s.text || s)}</div>`;
+        });
+        sourcesHtml += '</details>';
+        sourcesEl.innerHTML = sourcesHtml;
+        sourcesEl.style.display = 'block';
+        sourcesEl.style.animation = 'fadeIn 0.3s ease';
+      }
+
+      // Добавляем кнопку копирования
+      const bubble = document.getElementById(bubbleId);
+      if (bubble) addCopyButton(bubble);
+
+      document.getElementById('chatBox').scrollTop = document.getElementById('chatBox').scrollHeight;
+    }
+  } catch (err) {
+    removeMsgById(loadingMsgId);
+    addMsg('bot', '⚠️ Ошибка соединения с сервером. Убедитесь что бэкенд запущен на порту 5000.');
+  }
+
+  input.disabled = false;
+  input.focus();
+  btn.disabled = false;
+}
+
+/**
+ * Печатает текст в элементе с эффектом пишущей машинки.
+ * @param {HTMLElement} el — элемент, в который печатаем
+ * @param {string} text — текст для печати
+ * @param {number} speed — скорость в мс на символ
+ */
+function typewriter(el, text, speed = 18) {
+  return new Promise(resolve => {
+    el.textContent = '';
+    let i = 0;
+    const len = text.length;
+
+    function tick() {
+      if (i < len) {
+        // Для ускорения печатаем по 1–3 символа за раз
+        const chunk = Math.min(3, len - i);
+        el.textContent += text.slice(i, i + chunk);
+        i += chunk;
+        // Адаптивная скорость: быстрее на длинных отрезках без знаков препинания
+        const remaining = text.slice(i);
+        const nextPause = remaining.search(/[.!?;:)]/);
+        const delay = (nextPause > 0 && nextPause < 10) ? speed * 3 : speed;
+        requestAnimationFrame(() => setTimeout(tick, delay));
+      } else {
+        resolve();
+      }
+    }
+    tick();
+  });
+}
+
+/**
+ * Добавляет сообщение в чат.
+ * @param {'bot'|'user'} role
+ * @param {string} content — HTML или текст
+ * @param {string|null} id — опциональный id для элемента
+ * @param {boolean} isHtml — если true, content рендерится как HTML
+ */
+function addMsg(role, content, id = null, isHtml = false) {
+  const box = document.getElementById('chatBox');
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  if (id) div.id = id;
+
+  const avatar = role === 'bot' ? '🤖' : '👤';
+
+  let bubbleContent = isHtml ? content : escHtml(content);
+
+  div.innerHTML = `
+    <div class="msg-avatar">${avatar}</div>
+    <div class="msg-content">
+      <div class="msg-bubble" id="bubble-${Date.now()}-${Math.random().toString(36).slice(2,6)}">
+        ${bubbleContent}
+      </div>
+    </div>
+  `;
+
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+
+  // Если это бот-сообщение (не loading), добавляем кнопку копирования
+  if (role === 'bot' && bubbleContent && !bubbleContent.includes('waiting-dots')) {
+    const bubble = div.querySelector('.msg-bubble');
+    if (bubble) addCopyButton(bubble);
+  }
+
+  return div;
+}
+
+function removeMsgById(id) {
+  const el = document.getElementById(id);
+  if (el) el.remove();
+}
+
+/**
+ * Добавляет кнопку копирования в сообщение бота.
+ */
+function addCopyButton(bubbleEl) {
+  const btn = document.createElement('button');
+  btn.className = 'copy-btn';
+  btn.innerHTML = '📋';
+  btn.title = 'Копировать ответ';
+  btn.setAttribute('aria-label', 'Копировать ответ');
+  btn.onclick = function (e) {
+    e.stopPropagation();
+    // Берём текст (без кнопок, без доп. элементов)
+    const text = bubbleEl.textContent.replace('📋', '').trim();
+    navigator.clipboard.writeText(text).then(() => {
+      btn.innerHTML = '✓';
+      btn.classList.add('copied');
+      setTimeout(() => {
+        btn.innerHTML = '📋';
+        btn.classList.remove('copied');
+      }, 2000);
+    }).catch(() => {
+      // fallback
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      btn.innerHTML = '✓';
+      btn.classList.add('copied');
+      setTimeout(() => {
+        btn.innerHTML = '📋';
+        btn.classList.remove('copied');
+      }, 2000);
+    });
+  };
+  bubbleEl.style.position = 'relative';
+  bubbleEl.appendChild(btn);
+}
+
+// =======================================================================
+// TEST (5-question test flow)
+// =======================================================================
+
+/**
+ * Состояние текущего теста.
+ */
+let testState = {
+  questions: [],      // массив вопросов от сервера
+  currentIndex: 0,    // индекс текущего вопроса (0..4)
+  userAnswers: [],    // массив ответов пользователя
+  results: [],        // массив результатов { is_correct, correct_answer, feedback }
+  completed: false,   // завершён ли тест
+  testId: null,       // ID теста (если сервер выдаёт)
+};
+
+/**
+ * Глобальная статистика тестов (кумулятивная).
+ */
+let testStats = {
+  total: 0,      // всего тестов
+  correct: 0,    // всего верных ответов
+  wrong: 0,      // всего неверных ответов
+};
+
+// Текущее значение ответа (для true_false и multiple_choice)
+let _currentAnswer = null;
+
+/**
+ * Запуск теста.
+ */
+async function startTest() {
+  await _startTestCommon();
+}
+
+/**
+ * Запуск теста с привязкой к конкретному термину.
+ */
+async function startTestWithTerm(term) {
+  switchTab('trainer');
+  // Термин будет передан в запросе
+  await _startTestCommon(term);
+}
+
+async function _startTestCommon(forceTerm) {
+  // Сбрасываем состояние
+  testState = {
+    questions: [],
+    currentIndex: 0,
+    userAnswers: [],
+    results: [],
+    completed: false,
+    testId: null,
+  };
+  _currentAnswer = null;
+
+  // Прячем welcome и results, показываем вопрос
+  document.getElementById('testWelcome').style.display = 'none';
+  document.getElementById('testResults').style.display = 'none';
+  document.getElementById('testQuestion').style.display = 'block';
+  document.getElementById('questionResult').style.display = 'none';
+
+  // Показываем загрузку
+  const answerArea = document.getElementById('answerArea');
+  answerArea.innerHTML = '<div class="spinner"></div><div class="text-center text-secondary">Генерация теста...</div>';
+  document.getElementById('checkAnswerBtn').disabled = true;
+
+  try {
+    let questions;
+
+    // Пробуем новый эндпоинт
+    try {
+      let url = API + '/api/trainer/generate';
+      if (forceTerm) {
+        url += '?term=' + encodeURIComponent(forceTerm);
+      }
+      const d = await apiFetch(url);
+      questions = d.questions || d;
+      testState.testId = d.test_id || null;
+    } catch (_newErr) {
+      // Fallback — пытаемся получить вопросы по одному через старый API
+      // (не полный тест, но хоть что-то)
+      questions = await _fallbackGenerateQuestions(forceTerm);
+    }
+
+    if (!questions || !questions.length) {
+      throw new Error('Не удалось получить вопросы');
+    }
+
+    // Если пришёл объект с полем questions
+    if (Array.isArray(questions)) {
+      testState.questions = questions;
+    } else {
+      testState.questions = Object.values(questions);
+    }
+
+    // Показываем первый вопрос
+    testState.currentIndex = 0;
+    showQuestion(0);
+  } catch (err) {
+    answerArea.innerHTML = `<div style="color:var(--error);padding:10px;">⚠️ ${escHtml(err.message || 'Ошибка загрузки теста')}</div>`;
+    document.getElementById('checkAnswerBtn').disabled = true;
+  }
+}
+
+/**
+ * Fallback: получаем 5 вопросов по одному через старый /trainer/question.
+ */
+async function _fallbackGenerateQuestions(forceTerm) {
+  const questions = [];
+  const loadedTerms = [];
+
+  for (let i = 0; i < 5; i++) {
+    try {
+      // Пробуем разные термины
+      const term = (i === 0 && forceTerm) ? forceTerm : undefined;
+      let url = API + '/trainer/question';
+      if (term) url += '?term=' + encodeURIComponent(term);
+      const r = await fetch(url);
+      const d = await r.json();
+
+      questions.push({
+        id: i,
+        type: 'definition',
+        question_text: d.term
+          ? `Что такое «${d.term}»? Объясните своими словами.`
+          : (d.question || 'Вопрос #' + (i + 1)),
+        correct_answer: d.explanation || d.term || '',
+        options: null,
+        context_source: d.term || '',
+      });
+
+      if (d.term) loadedTerms.push(d.term);
+    } catch {
+      questions.push({
+        id: i,
+        type: 'definition',
+        question_text: 'Вопрос #' + (i + 1) + ': Опишите понятие из теории графов.',
+        correct_answer: '',
+        options: null,
+      });
+    }
+  }
+
+  return questions;
+}
+
+/**
+ * Показать вопрос по индексу.
+ */
+function showQuestion(index) {
+  const q = testState.questions[index];
+  if (!q) return;
+
+  const total = testState.questions.length;
+  const pct = ((index + 1) / total * 100).toFixed(0);
+
+  // Прогресс
+  document.getElementById('progressLabel').textContent = `Вопрос ${index + 1} / ${total}`;
+  document.getElementById('progressPct').textContent = pct + '%';
+  document.getElementById('progressFill').style.width = pct + '%';
+
+  // Бейдж типа
+  const badge = document.getElementById('questionTypeBadge');
+  const typeInfo = getTypeInfo(q.type);
+  badge.className = 'type-badge ' + (q.type || 'definition');
+  badge.textContent = typeInfo.icon + ' ' + typeInfo.label;
+
+  // Текст вопроса
+  document.getElementById('questionText').textContent = q.question_text;
+
+  // Прячем результат
+  document.getElementById('questionResult').style.display = 'none';
+
+  // Показываем кнопку "Проверить"
+  const checkBtn = document.getElementById('checkAnswerBtn');
+  checkBtn.style.display = 'inline-flex';
+  checkBtn.disabled = false;
+  checkBtn.textContent = 'Проверить';
+
+  // Очищаем предыдущий ответ
+  _currentAnswer = null;
+
+  // Рендерим UI ответа
+  const answerArea = document.getElementById('answerArea');
+  answerArea.innerHTML = '';
+  answerArea.className = '';
+
+  // Анимация для нового вопроса
+  document.getElementById('testQuestion').style.animation = 'none';
+  requestAnimationFrame(() => {
+    document.getElementById('testQuestion').style.animation = 'fadeIn 0.3s ease';
+  });
+
+  switch (q.type) {
+    case 'definition':
+      renderDefinitionUI(answerArea, q);
+      break;
+    case 'true_false':
+      renderTrueFalseUI(answerArea, q);
+      break;
+    case 'multiple_choice':
+      renderMultipleChoiceUI(answerArea, q);
+      break;
+    case 'fill_blank':
+      renderFillBlankUI(answerArea, q);
+      break;
+    case 'matching':
+      renderMatchingUI(answerArea, q);
+      break;
+    default:
+      renderDefinitionUI(answerArea, q);
+      break;
+  }
+
+  _currentAnswer = null;
+}
+
+/**
+ * Возвращает информацию о типе вопроса.
+ */
+function getTypeInfo(type) {
+  const map = {
+    definition:      { icon: '📝', label: 'Определение' },
+    true_false:      { icon: '✅', label: 'Верно/Неверно' },
+    multiple_choice: { icon: '🎯', label: 'Множественный выбор' },
+    fill_blank:      { icon: '✏️', label: 'Заполните пропуск' },
+    matching:        { icon: '🔗', label: 'Сопоставление' },
+  };
+  return map[type] || { icon: '📝', label: 'Вопрос' };
+}
+
+// ─── UI Renderers ────────────────────────────────────────────
+
+function renderDefinitionUI(area) {
+  area.innerHTML = `
+    <textarea class="answer-textarea" id="testAnswerInput"
+              placeholder="Введите ваш ответ..." rows="4"></textarea>
+    <div class="hint-text">💡 Постарайтесь дать развёрнутый ответ своими словами.</div>
+  `;
+  const ta = document.getElementById('testAnswerInput');
+  ta.focus();
+  ta.addEventListener('input', () => { _currentAnswer = ta.value; });
+}
+
+function renderTrueFalseUI(area) {
+  area.innerHTML = `
+    <div class="tf-group">
+      <button class="tf-btn" id="tfTrue" data-value="Верно">✅ Верно</button>
+      <button class="tf-btn" id="tfFalse" data-value="Неверно">❌ Неверно</button>
+    </div>
+  `;
+  document.getElementById('tfTrue').addEventListener('click', () => {
+    _currentAnswer = 'Верно';
+    document.getElementById('tfTrue').className = 'tf-btn selected-true';
+    document.getElementById('tfFalse').className = 'tf-btn';
+  });
+  document.getElementById('tfFalse').addEventListener('click', () => {
+    _currentAnswer = 'Неверно';
+    document.getElementById('tfFalse').className = 'tf-btn selected-false';
+    document.getElementById('tfTrue').className = 'tf-btn';
+  });
+}
+
+function renderMultipleChoiceUI(area, q) {
+  const options = q.options || [];
+  if (!options.length) {
+    // fallback
+    renderDefinitionUI(area);
+    return;
+  }
+
+  let html = '<div class="mc-group">';
+  options.forEach((opt, i) => {
+    const id = 'mc-' + i;
+    html += `
+      <label class="mc-option" id="${id}-label" for="${id}">
+        <input type="radio" name="mcAnswer" id="${id}" value="${escHtml(opt)}">
+        <span class="mc-option-text">${escHtml(opt)}</span>
+      </label>
+    `;
+  });
+  html += '</div>';
+  area.innerHTML = html;
+
+  // Обработчик выбора
+  document.querySelectorAll('input[name="mcAnswer"]').forEach(input => {
+    input.addEventListener('change', () => {
+      _currentAnswer = input.value;
+      // Визуально выделяем выбранный
+      document.querySelectorAll('.mc-option').forEach(l => l.classList.remove('selected'));
+      input.closest('.mc-option').classList.add('selected');
+    });
+  });
+}
+
+function renderFillBlankUI(area) {
+  area.innerHTML = `
+    <input class="answer-input" id="testAnswerInput" type="text"
+           placeholder="Введите пропущенный термин..." autocomplete="off">
+    <div class="hint-text">✏️ Введите термин, который пропущен в определении.</div>
+  `;
+  const inp = document.getElementById('testAnswerInput');
+  inp.focus();
+  inp.addEventListener('input', () => { _currentAnswer = inp.value.trim(); });
+}
+
+function renderMatchingUI(area) {
+  area.innerHTML = `
+    <input class="answer-input" id="testAnswerInput" type="text"
+           placeholder="Введите термин..." autocomplete="off">
+    <div class="hint-text">🔗 Какой термин соответствует данному определению?</div>
+  `;
+  const inp = document.getElementById('testAnswerInput');
+  inp.focus();
+  inp.addEventListener('input', () => { _currentAnswer = inp.value.trim(); });
+}
+
+// ─── Submit Answer ────────────────────────────────────────────
+
+async function submitTestAnswer() {
+  const q = testState.questions[testState.currentIndex];
+  if (!q) return;
+
+  // Получаем ответ
+  let answer = _currentAnswer;
+
+  // Для textarea и input
+  if (answer === null) {
+    const inp = document.getElementById('testAnswerInput');
+    if (inp) answer = inp.value.trim();
+  }
+
+  // Проверка
+  if (!answer || (typeof answer === 'string' && !answer.trim())) {
+    // Для true_false или mc если ничего не выбрано
+    if (q.type === 'true_false' || q.type === 'multiple_choice') {
+      alert('Пожалуйста, выберите вариант ответа.');
+      return;
+    }
+    alert('Пожалуйста, введите ответ.');
+    return;
+  }
+
+  // Отключаем кнопку
+  const checkBtn = document.getElementById('checkAnswerBtn');
+  checkBtn.disabled = true;
+  checkBtn.textContent = 'Проверка...';
+
+  // Блокируем ввод
+  _disableAnswerInputs(true);
+
+  try {
+    let result;
+
+    // Пробуем новый /api/trainer/check
+    try {
+      const body = {
+        test_id: testState.testId,
+        question_index: testState.currentIndex,
+        question_id: q.id,
+        answer: String(answer).trim(),
+        question_type: q.type,
+        correct_answer: q.correct_answer,
+        options: q.options || [],
+      };
+      result = await apiFetch(API + '/api/trainer/check', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+    } catch (_newErr) {
+      // Fallback: проверяем локально (простым сравнением)
+      result = _localCheck(q, answer);
+    }
+
+    // Сохраняем результат
+    const isCorrect = result && result.is_correct;
+    const feedback = result && result.feedback ? result.feedback : (isCorrect ? '✅ Верно!' : '❌ Неверно');
+    const correctAnswer = result && result.correct_answer ? result.correct_answer : q.correct_answer;
+
+    testState.userAnswers[testState.currentIndex] = String(answer).trim();
+    testState.results[testState.currentIndex] = {
+      is_correct: !!isCorrect,
+      correct_answer: correctAnswer,
+      feedback: feedback,
+    };
+
+    // Отображаем результат
+    showQuestionResult(q, isCorrect, feedback, correctAnswer, answer);
+
+    // Если это последний вопрос, меняем кнопку
+    if (testState.currentIndex >= testState.questions.length - 1) {
+      checkBtn.textContent = 'Показать результаты';
+      checkBtn.onclick = showResults;
+      checkBtn.disabled = false;
+      checkBtn.style.display = 'inline-flex';
+    } else {
+      checkBtn.textContent = 'Далее →';
+      checkBtn.onclick = goToNextQuestion;
+      checkBtn.disabled = false;
+      checkBtn.style.display = 'inline-flex';
+    }
+  } catch (err) {
+    checkBtn.disabled = false;
+    checkBtn.textContent = 'Проверить';
+    _disableAnswerInputs(false);
+    alert('Ошибка проверки ответа: ' + (err.message || ''));
+  }
+}
+
+/**
+ * Локальная проверка ответа (fallback).
+ */
+function _localCheck(q, answer) {
+  const userAns = String(answer).trim().toLowerCase();
+  const correctAns = (q.correct_answer || '').trim().toLowerCase();
+
+  let isCorrect = false;
+
+  if (q.type === 'definition') {
+    // Простейшая проверка: достаточно много общих слов
+    const userWords = new Set(userAns.split(/\s+/).filter(w => w.length > 2));
+    const correctWords = new Set(correctAns.split(/\s+/).filter(w => w.length > 2));
+    if (userWords.size > 0 && correctWords.size > 0) {
+      let overlap = 0;
+      userWords.forEach(w => { if (correctWords.has(w)) overlap++; });
+      isCorrect = (overlap / Math.max(correctWords.size, 1)) >= 0.15;
+    }
+  } else {
+    isCorrect = userAns === correctAns;
+  }
+
+  return {
+    is_correct: isCorrect,
+    feedback: isCorrect ? '✅ Верно!' : '❌ Неверно',
+    correct_answer: q.correct_answer,
+  };
+}
+
+/**
+ * Показывает результат ответа на вопрос.
+ */
+function showQuestionResult(q, isCorrect, feedback, correctAnswer, userAnswer) {
+  const resultDiv = document.getElementById('questionResult');
+  resultDiv.style.display = 'block';
+  resultDiv.className = 'result-card ' + (isCorrect ? 'correct' : 'wrong');
+
+  let html = `
+    <div class="result-title">
+      <span class="icon">${isCorrect ? '✅' : '❌'}</span>
+      ${escHtml(feedback)}
+    </div>
+  `;
+
+  if (!isCorrect) {
+    html += `<div class="result-detail">Ваш ответ: ${escHtml(String(userAnswer || '').slice(0, 300))}</div>`;
+    if (correctAnswer && q.type !== 'multiple_choice') {
+      html += `<div class="result-correct-answer"><strong>Правильный ответ:</strong> ${escHtml(correctAnswer)}</div>`;
+    }
+    if (q.type === 'multiple_choice' && correctAnswer) {
+      // Подсветим правильный вариант
+      html += `<div class="result-detail" style="margin-top:8px;">Правильный вариант выделен зелёным.</div>`;
+    }
+  } else {
+    html += `<div class="result-detail">✓ Ответ верный!</div>`;
+  }
+
+  resultDiv.innerHTML = html;
+}
+
+/**
+ * Переход к следующему вопросу.
+ */
+function goToNextQuestion() {
+  testState.currentIndex++;
+  if (testState.currentIndex < testState.questions.length) {
+    document.getElementById('checkAnswerBtn').onclick = submitTestAnswer;
+    showQuestion(testState.currentIndex);
+  }
+}
+
+/**
+ * Показывает экран результатов.
+ */
+function showResults() {
+  testState.completed = true;
+
+  // Обновляем глобальную статистику
+  let correctCount = 0;
+  let wrongCount = 0;
+  testState.results.forEach(r => {
+    if (r && r.is_correct) correctCount++;
+    else wrongCount++;
+  });
+  testStats.total++;
+  testStats.correct += correctCount;
+  testStats.wrong += wrongCount;
+  updateTestStats();
+
+  // Прячем вопрос, показываем результаты
+  document.getElementById('testQuestion').style.display = 'none';
+  const resultsDiv = document.getElementById('testResults');
+  resultsDiv.style.display = 'block';
+
+  const total = testState.questions.length;
+  const pct = total > 0 ? Math.round(correctCount / total * 100) : 0;
+
+  let scoreClass = 'bad';
+  if (pct >= 90) scoreClass = 'perfect';
+  else if (pct >= 70) scoreClass = 'good';
+  else if (pct >= 50) scoreClass = 'average';
+
+  let message = '';
+  if (pct === 100) message = 'Идеально! Вы отлично знаете теорию графов! 🎉';
+  else if (pct >= 80) message = 'Отличный результат! Немного повторить — и будет идеально.';
+  else if (pct >= 60) message = 'Хороший результат! Есть куда расти.';
+  else if (pct >= 40) message = 'Неплохо, но стоит повторить материал.';
+  else message = 'Стоит ещё раз прочитать учебник и попробовать снова.';
+
+  let detailsHtml = '';
+  testState.questions.forEach((q, i) => {
+    const r = testState.results[i];
+    if (!r) return;
+    const isCorrect = r.is_correct;
+    const typeInfo = getTypeInfo(q.type);
+    const qNum = i + 1;
+
+    detailsHtml += `
+      <div class="result-item ${isCorrect ? 'correct' : 'wrong'} anim-fadeIn" style="animation-delay:${i * 0.06}s;">
+        <div class="mark">${isCorrect ? '✅' : '❌'}</div>
+        <div style="flex:1;min-width:0;">
+          <div class="q-number">Вопрос ${qNum}</div>
+          <div class="q-type">${typeInfo.icon} ${typeInfo.label}</div>
+          <div class="q-text">${escHtml(q.question_text)}</div>
+          <div class="q-answer">Ваш ответ: <strong>${escHtml(String(testState.userAnswers[i] || '—').slice(0, 200))}</strong></div>
+          ${!isCorrect ? `<div class="q-expected">Правильный ответ: ${escHtml(String(r.correct_answer || '').slice(0, 200))}</div>` : ''}
+        </div>
+      </div>
+    `;
+  });
+
+  resultsDiv.innerHTML = `
+    <div class="results-screen">
+      <div class="results-score ${scoreClass}">${correctCount} / ${total}</div>
+      <div class="results-pct">${pct}% верных ответов</div>
+      <div class="results-message">${message}</div>
+      <div class="btn-group" style="justify-content:center;">
+        <button class="btn btn-primary" onclick="startTest()">🔄 Пройти заново</button>
+        <button class="btn btn-secondary" onclick="switchTab('chat')">💬 Вернуться к чату</button>
+      </div>
+
+      <div class="results-details">
+        <h4>📋 Детализация по вопросам</h4>
+        ${detailsHtml}
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Блокирует/разблокирует поля ввода ответа.
+ */
+function _disableAnswerInputs(disabled) {
+  const textareas = document.querySelectorAll('.answer-textarea');
+  const inputs = document.querySelectorAll('.answer-input');
+  const radios = document.querySelectorAll('input[type="radio"]');
+  const tfBtns = document.querySelectorAll('.tf-btn');
+
+  textareas.forEach(el => el.disabled = disabled);
+  inputs.forEach(el => el.disabled = disabled);
+  radios.forEach(el => el.disabled = disabled);
+  tfBtns.forEach(el => el.disabled = disabled);
+}
+
+// ─── Stats ────────────────────────────────────────────────────
+
+function updateTestStats() {
+  document.getElementById('statTotal').textContent = testStats.total;
+  document.getElementById('statCorrect').textContent = testStats.correct;
+  document.getElementById('statWrong').textContent = testStats.wrong;
+
+  const totalAnswers = testStats.correct + testStats.wrong;
+  const pct = totalAnswers > 0
+    ? Math.round(testStats.correct / totalAnswers * 100) + '%'
+    : '—';
+  document.getElementById('statPercent').textContent = pct;
+}
+
+function resetTestStats() {
+  if (!confirm('Сбросить всю статистику тестов?')) return;
+  testStats = { total: 0, correct: 0, wrong: 0 };
+  updateTestStats();
+  _resetToWelcome();
+}
+
+function _resetToWelcome() {
+  document.getElementById('testQuestion').style.display = 'none';
+  document.getElementById('testResults').style.display = 'none';
+  document.getElementById('testWelcome').style.display = 'flex';
+  testState = {
+    questions: [],
+    currentIndex: 0,
+    userAnswers: [],
+    results: [],
+    completed: false,
+    testId: null,
+  };
+  _currentAnswer = null;
+}
+
+// =======================================================================
+// BACKWARD COMPATIBILITY — старые функции (для обратной совместимости)
+// =======================================================================
+
+/**
+ * Старая статистика (для обратной совместимости).
+ */
+let stats = { total: 0, correct: 0, wrong: 0 };
+
+/**
+ * Старый тренажёр: получить следующий вопрос.
+ */
+async function nextQuestion(forceTerm = null) {
+  // Перенаправляем на новый тест
+  if (forceTerm) {
+    await startTestWithTerm(forceTerm);
+  } else {
+    await startTest();
+  }
+}
+
+/**
+ * Старая проверка ответа.
+ */
+async function submitAnswer() {
+  // В новом UI эта функция не используется напрямую
+  alert('Используйте новый тестовый интерфейс.');
+}
+
+/**
+ * Старое обновление статистики.
+ */
+function updateStats() {
+  // Синхронизируем со старой статистикой
+  stats.total = testStats.total;
+  stats.correct = testStats.correct;
+  stats.wrong = testStats.wrong;
+  updateTestStats();
+}
+
+/**
+ * Старый сброс статистики.
+ */
+function resetStats() {
+  stats = { total: 0, correct: 0, wrong: 0 };
+  testStats = { total: 0, correct: 0, wrong: 0 };
+  updateTestStats();
+  _resetToWelcome();
+}
+
+// =======================================================================
+// UTILS
+// =======================================================================
+
+function escHtml(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+// =======================================================================
+// API BASE
+// =======================================================================
+const API = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+  ? 'http://localhost:5000'
+  : '';
+
+// =======================================================================
+// INIT
+// =======================================================================
+checkHealth();
+loadTerms();
+
+// Периодическая проверка здоровья
+setInterval(checkHealth, 30000);
+
+// Сессионная инициализация (неблокирующая)
+apiFetch(API + '/api/session/init', {
+  method: 'POST',
+  body: JSON.stringify({
+    session_id: SESSION_ID,
+    user_agent: navigator.userAgent,
+    language: navigator.language,
+    timestamp: new Date().toISOString(),
+  }),
+}).catch(() => {
+  // Игнорируем ошибки — сессия опциональна
+});
+</script>
+</body>
+</html>
