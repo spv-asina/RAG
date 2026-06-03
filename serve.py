@@ -7,6 +7,7 @@ Flask раздаёт и API (/ask, /trainer/*) и статику (frontend/index
 import sys
 import os
 import time
+from typing import Optional, List, Dict, Tuple
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'backend'))
 
@@ -64,7 +65,11 @@ def get_session():
 # ─── STATIC ──────────────────────────────────────────────
 @app.route('/')
 def index():
-    return send_from_directory(FRONTEND_DIR, 'index.html')
+    resp = send_from_directory(FRONTEND_DIR, 'index.html')
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
 
 
 @app.route('/health')
@@ -124,11 +129,27 @@ def chat():
     if not results:
         answer_text = 'Не удалось найти релевантный фрагмент в учебнике.'
         confidence = 'low'
+        detected_term = None
     else:
         best = results[0]
-        answer_text = best['text'] if isinstance(best, dict) else best.chunk.text
         score = best.get('score', 0) if isinstance(best, dict) else best.score
         confidence = 'high' if score >= 0.3 else ('medium' if score >= 0.15 else 'low')
+
+        # Извлекаем термин
+        if isinstance(best, dict):
+            detected_term = best.get('term_match') or (best.get('term') if best.get('term') in (best.get('text') or '') else None)
+        else:
+            detected_term = best.term_match or (best.chunk.terms[0] if best.chunk.terms else None)
+
+        # Берём точное определение из term_index, если термин найден
+        if detected_term:
+            term_data = retriever.term_index.get(detected_term)
+            if term_data:
+                answer_text = term_data.get('text', '')
+            else:
+                answer_text = best['text'] if isinstance(best, dict) else best.chunk.text
+        else:
+            answer_text = best['text'] if isinstance(best, dict) else best.chunk.text
 
         # Если LLM доступен — улучшаем ответ
         if llm_service and confidence != 'low':
@@ -137,36 +158,71 @@ def chat():
                 answer_text = improved
                 was_improved = True
 
-        # Формируем источники
+        # Формируем источники — полный текст чанка, без обрезания
         for r in results:
             if isinstance(r, dict):
-                txt = r.get('text', '')[:200]
+                txt = r.get('text', '')
                 scr = r.get('score', 0)
             else:
-                txt = r.chunk.text[:200]
+                txt = r.chunk.text
                 scr = r.score
             sources.append({
-                'text': txt + '...',
+                'text': txt,
                 'score': round(scr, 3),
             })
 
     # Сохраняем ответ в историю
     session.chat_history.append(ChatMessage(role='assistant', content=answer_text, timestamp=time.time()))
 
-    return jsonify({
+    response = {
         'answer': answer_text,
         'confidence': confidence,
         'improved': was_improved,
         'sources': sources,
-    })
+    }
+    if detected_term:
+        response['term'] = detected_term
+    return jsonify(response)
 
 
 # ─── API: TRAINER ────────────────────────────────────────
-@app.route('/api/trainer/generate', methods=['GET'])
+
+def _extract_term_from_context(context_source: str) -> Optional[str]:
+    """
+    Извлекает термин из context_source вида:
+      - "Определение термина «{term}»"
+      - "Определение термина «{term}» (вариация: ...)"
+    
+    Возвращает: термин или None, если не удалось извлечь.
+    """
+    if not context_source:
+        return None
+    
+    # Пробуем извлечь из шаблона "Определение термина «...»"
+    marker_start = 'Определение термина «'
+    if context_source.startswith(marker_start):
+        rest = context_source[len(marker_start):]
+        # Ищем закрывающую кавычку »
+        close_idx = rest.find('»')
+        if close_idx > 0:
+            return rest[:close_idx]
+    
+    # Fallback: если не удалось извлечь — попробуем найти в retriever.terms
+    # (это крайний случай)
+    return None
+
+
+@app.route('/api/trainer/generate', methods=['GET', 'POST'])
 def generate_test():
     session = get_session()
 
-    questions = trainer.generate_test()
+    # УЛУЧШЕНИЕ: используем progress_map для умного выбора терминов
+    questions = trainer.generator.generate_test(
+        retriever.terms,
+        progress_map=session.term_progress,
+        count=5
+    )
+    
     session.test_generated = True
     session.test_questions = questions
     session.test_answers = [None] * len(questions)
@@ -198,21 +254,27 @@ def generate_test():
         safe_questions.append({
             'id': q.id,
             'type': q.type,
-            'question': q.question_text,
+            'question_text': q.question_text,
             'options': q.options,
             'llm_improved': q.llm_improved,
         })
 
-    return jsonify({
+    resp = jsonify({
         'session_id': session.session_id,
         'questions': safe_questions,
         'total': len(questions),
         'generated_at': session.test_started_at,
     })
+    resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    resp.headers['Pragma'] = 'no-cache'
+    resp.headers['Expires'] = '0'
+    return resp
 
 
 @app.route('/api/trainer/check', methods=['POST'])
 def check_answer():
+    from trainer import TestValidator  # Импортируем локально, чтобы избежать циклов
+    
     data = request.get_json()
     question_id = data.get('question_id')
     answer = data.get('answer', '').strip()
@@ -231,7 +293,21 @@ def check_answer():
     question = session.test_questions[question_id]
     session.test_answers[question_id] = answer
 
-    is_correct = trainer.check_answer(question, answer)
+    # УЛУЧШЕНИЕ: используем детальную проверку
+    check_result = TestValidator.check_answer_with_details(
+        question, answer, retriever
+    )
+    is_correct = check_result.is_correct
+
+    # УЛУЧШЕНИЕ: обновляем прогресс термина (если удалось извлечь термин)
+    term_name = _extract_term_from_context(question.context_source)
+    if term_name:
+        session_manager.update_term_progress(
+            session.session_id,  # передаём ID сессии, а не объект
+            term_name, 
+            is_correct,
+            question_type=question.type  # передаём тип вопроса для статистики
+        )
 
     # Проверяем, завершён ли тест
     all_answered = all(a is not None for a in session.test_answers)
@@ -258,6 +334,8 @@ def check_answer():
 
     response = {
         'correct': is_correct,
+        'is_correct': is_correct,
+        'feedback': '✅ Верно!' if is_correct else '❌ Неверно',
         'question_id': question_id,
         'test_completed': session.test_completed,
         'progress': {
@@ -272,9 +350,30 @@ def check_answer():
         'next_question_id': next_id,
     }
 
-    if not is_correct and question.type == 'definition':
-        # Для открытых вопросов показываем правильный ответ при ошибке
-        response['correct_answer'] = question.correct_answer[:300] + '...' if len(question.correct_answer) > 300 else question.correct_answer
+    # УЛУЧШЕНИЕ: добавляем детали score для открытых вопросов
+    if question.type == 'definition':
+        response['score_details'] = {
+            'is_open_question': True,
+            'similarity_score': check_result.similarity_score,
+            'overlap_score': check_result.overlap_score,
+            'final_score': check_result.final_score,
+            'similarity_pct': check_result.similarity_pct,
+            'overlap_pct': check_result.overlap_pct,
+            'final_pct': check_result.final_pct,
+            'passing_threshold': check_result.passing_threshold,
+            'threshold_pct': check_result.threshold_pct,
+        }
+    
+    # УЛУЧШЕНИЕ: показываем правильный ответ для ВСЕХ типов вопросов при неверном ответе
+    # (ранее было только для definition)
+    # Используем display_answer если доступен, иначе correct_answer
+    if not is_correct:
+        answer_to_show = question.display_answer if question.display_answer is not None else question.correct_answer
+        # Ограничиваем длину для длинных ответов (например, для definition или true_false)
+        if len(answer_to_show) > 300:
+            response['correct_answer'] = answer_to_show[:300] + '...'
+        else:
+            response['correct_answer'] = answer_to_show
 
     if session.test_completed and session.test_results:
         response['final_score'] = {
@@ -286,7 +385,7 @@ def check_answer():
             {
                 'question_id': d.question_id,
                 'type': d.type,
-                'question': d.question_text,
+                'question_text': d.question_text,
                 'user_answer': d.user_answer,
                 'correct_answer': d.correct_answer,
                 'is_correct': d.is_correct,
@@ -304,7 +403,6 @@ def complete_test():
     if not session.test_generated:
         return jsonify({'error': 'Нет активного теста'}), 400
 
-    # Заполняем пропущенные ответы как пустые
     for i in range(len(session.test_answers)):
         if session.test_answers[i] is None:
             session.test_answers[i] = ''
@@ -323,7 +421,7 @@ def complete_test():
             {
                 'question_id': d.question_id,
                 'type': d.type,
-                'question': d.question_text,
+                'question_text': d.question_text,
                 'user_answer': d.user_answer,
                 'correct_answer': d.correct_answer,
                 'is_correct': d.is_correct,
@@ -343,7 +441,102 @@ def reset_test():
     session.test_completed = False
     session.test_started_at = None
     session.test_results = None
-    return jsonify({'message': 'Тест сброшен. Вызовите /api/trainer/generate для создания нового теста.'})
+    return jsonify({'reset': True, 'message': 'Тест сброшен. Вызовите /api/trainer/generate для создания нового теста.'})
+
+
+@app.route('/api/trainer/progress', methods=['GET'])
+def get_progress():
+    """
+    Возвращает общую статистику прогресса обучения терминов для текущей сессии.
+    
+    Статусы терминов (по session.py):
+      - never_asked: вопросов = 0
+      - always_wrong: вопросов ≥1, правильных = 0
+      - in_progress: вопросов ≥1, 1 ≤ правильных < вопросов
+      - learned: вопросов ≥1, правильных ≥1 (упрощённый критерий: хоть 1 правильный ответ)
+    """
+    session = get_session()
+    
+    # Получаем все термины из retriever
+    all_terms = retriever.terms
+    total_terms = len(all_terms)
+    
+    # Считаем статистику
+    stats = {
+        'never_asked': 0,
+        'always_wrong': 0,
+        'in_progress': 0,
+        'learned': 0,
+    }
+    
+    terms_progress = []
+    
+    for term_name in all_terms:
+        # Получаем прогресс из сессии (или создаём пустой, если нет)
+        progress = session.term_progress.get(term_name)
+        
+        # Если нет прогресса — создаём объект TermProgress для удобства
+        if progress is None:
+            # Создаём "виртуальный" прогресс со статусами по умолчанию
+            status = 'never_asked'
+            questions_asked = 0
+            correct_answers = 0
+        else:
+            # Извлекаем из существующего объекта
+            status = progress.status
+            questions_asked = progress.asked_count
+            correct_answers = progress.correct_count
+        
+        # Увеличиваем счётчики
+        if status in stats:
+            stats[status] += 1
+        
+        # Добавляем в список для подробного отображения (опционально)
+        terms_progress.append({
+            'term': term_name,
+            'status': status,
+            'questions_asked': questions_asked,
+            'correct_answers': correct_answers,
+        })
+    
+    # Считаем покрытие (сколько терминов хотя бы раз задали)
+    terms_with_any_question = (
+        stats['always_wrong'] + 
+        stats['in_progress'] + 
+        stats['learned']
+    )
+    coverage_pct = (
+        0 if total_terms == 0 else 
+        int((terms_with_any_question / total_terms) * 100)
+    )
+    
+    # Считаем процент выученных (correct >= 1)
+    learned_pct = (
+        0 if total_terms == 0 else 
+        int((stats['learned'] / total_terms) * 100)
+    )
+    
+    return jsonify({
+        'session_id': session.session_id,
+        'summary': {
+            'total_terms': total_terms,
+            'never_asked': stats['never_asked'],
+            'always_wrong': stats['always_wrong'],
+            'in_progress': stats['in_progress'],
+            'learned': stats['learned'],
+        },
+        'coverage': {
+            'covered': terms_with_any_question,
+            'total': total_terms,
+            'percent': coverage_pct,
+        },
+        'learned': {
+            'count': stats['learned'],
+            'total': total_terms,
+            'percent': learned_pct,
+        },
+        'terms_progress': terms_progress,  # Подробный список всех терминов (опционально)
+    })
 
 
 # ─── API: TERMS (совместимость) ────────────────────────

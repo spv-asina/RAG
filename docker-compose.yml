@@ -1,25 +1,21 @@
-version: '3.8'
-
 services:
   backend:
     build: .
     ports:
       - "5000:5000"
     volumes:
-      # Монтируем data чтобы можно было обновить без пересборки
       - ./data:/app/data:ro
     environment:
       - PYTHONUNBUFFERED=1
-      - LLM_ENABLED=${LLM_ENABLED:-true}
+      - LLM_ENABLED=${LLM_ENABLED:-false}
       - LLM_BASE_URL=http://llm-server:8080
       - LLM_TIMEOUT=30
-    depends_on:
-      llm-server:
-        condition: service_started
     mem_limit: 2g
     restart: unless-stopped
 
   llm-server:
+    profiles:
+      - llm
     build:
       context: .
       dockerfile: Dockerfile.llm
@@ -29,8 +25,3 @@ services:
       - ./models:/models:ro
     mem_limit: 6g
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3

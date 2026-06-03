@@ -93,7 +93,39 @@ def lemmatize(text: str) -> str:
         lemma, _ = _parse_word(tok)
         if len(lemma) > 2:
             lemmas.append(lemma)
+        # Если оригинал слова отличается от леммы и не стоп-слово — добавляем тоже
+        if tok != lemma and len(tok) > 2 and tok not in STOPWORDS:
+            lemmas.append(tok)
     return ' '.join(lemmas)
+
+
+def clean_text(text: str) -> str:
+    """Очищает текст от LaTeX-разметки для читаемого отображения."""
+    if not text:
+        return text
+    # 1. Удаляем backslash-escape перед пунктуацией (включая |)
+    text = re.sub(r'\\([.*\[\]()!?\-−:=|])', r'\1', text)
+    # 2. \... → ...
+    text = text.replace('\\...', '...')
+    # 3. Двойной backslash \\ (LaTeX set-difference) → убираем
+    text = text.replace('\\\\', '')
+    # 4. Оставшиеся \ перед пробелом/концом строки
+    text = re.sub(r'\\(\s)', r'\1', text)
+    text = re.sub(r'\\$', '', text)
+    # 5. Заменяем Def = на «— это»
+    text = re.sub(r'Def\s*(=)', '— это', text)
+    # 6. Угловые скобки ⟨⟩ → < > (совместимость)
+    text = text.replace('⟨', '<').replace('⟩', '>')
+    # 7. /∈ → ∉ (LaTeX \notin в кривой конвертации)
+    text = text.replace('/∈', '∉')
+    # 8. Комбинирующий слэш ̸ + = → ≠, ̸ + < → ≮, ̸ + > → ≯
+    text = re.sub(r'\u0338=', '≠', text)
+    text = re.sub(r'\u0338<', '≮', text)
+    text = re.sub(r'\u0338>', '≯', text)
+    text = re.sub(r'\u0338', '', text)  # оставшиеся — удаляем
+    # 8. Чистим повторы пробелов
+    text = re.sub(r' {2,}', ' ', text)
+    return text.strip()
 
 
 def _split_into_chunks_flat(text: str, min_len: int = 80, max_len: int = 500) -> List[str]:
@@ -184,17 +216,12 @@ def segment_chapter(text: str, terms: Optional[List[str]] = None) -> List[Chunk]
             detected_terms = _find_terms(section_text)
             chunks.append(Chunk(
                 index=len(chunks),
-                title=current_title,
+                title=clean_text(current_title),
                 level=current_level,
-                text=section_text,
+                text=clean_text(section_text),
                 terms=detected_terms,
             ))
         else:
-            # Дробим: каждый абзац — отдельный чанк (или по 500 символов)
-            # Здесь абзацы уже соединены, дробим по предложениям
-            import re as _re
-            # Пробуем разбить по границам абзацев (двойные переносы уже убраны,
-            # поэтому дробим по ~500 символов, не разрывая предложения)
             parts = []
             current_part = ""
             for paragraph in current_content:
@@ -214,9 +241,9 @@ def segment_chapter(text: str, terms: Optional[List[str]] = None) -> List[Chunk]
                 detected_terms = _find_terms(part)
                 chunks.append(Chunk(
                     index=len(chunks),
-                    title=current_title,
+                    title=clean_text(current_title),
                     level=current_level,
-                    text=part,
+                    text=clean_text(part),
                     terms=detected_terms,
                 ))
 
@@ -270,54 +297,322 @@ def _precompute_sentences(chunks: List[str]) -> List[List[SentenceData]]:
     return result
 
 
-def _score_sentence(term_lemmas: List[str], sent_data: SentenceData) -> float:
+def _find_term_words(term_lemmas, tokens: List) -> List[List[Tuple]]:
     """
-    Оценивает предложение как определение термина, используя предвычисленные данные.
-    term_lemmas: леммы слов термина.
-    sent_data: (sentence, lemma_set, tokens).
+    Для составных терминов: находит все вхождения КАЖДОГО слова термина отдельно.
+    
+    Возвращает: список списков токенов для каждого слова термина.
+    Например: для термина из 2 слов вернёт [[токены_слова1], [токены_слова2]]
+    """
+    is_nested = term_lemmas and isinstance(term_lemmas[0], list)
+    n_words = len(term_lemmas)
+    
+    result = []
+    for w in range(n_words):
+        alts = term_lemmas[w] if is_nested else [term_lemmas[w]]
+        word_tokens = []
+        for t in tokens:
+            if t[2] in alts:
+                word_tokens.append(t)
+        result.append(word_tokens)
+    return result
+
+
+def _generate_term_combinations(word_token_lists: List[List]) -> List[Tuple[int, int, Optional[str], float]]:
+    """
+    Генерирует все возможные комбинации токенов для составного термина.
+    
+    word_token_lists: [[токены_слова1], [токены_слова2], ...]
+    
+    Возвращает: список (start_pos, end_pos, case, compactness_score)
+    где compactness_score — насколько близко слова стоят друг к другу (1.0 = идеально, 0.0 = очень далеко)
+    """
+    from itertools import product
+    
+    n_words = len(word_token_lists)
+    
+    # Проверяем, есть ли вхождения для всех слов
+    for w, w_tokens in enumerate(word_token_lists):
+        if not w_tokens:
+            return []
+    
+    results = []
+    
+    # Перебираем все комбинации: одна позиция для первого слова, одна для второго и т.д.
+    for combo in product(*word_token_lists):
+        # combo = (token_word1, token_word2, ...)
+        
+        # Проверяем, что слова идут в правильном порядке (токены не пересекаются)
+        # Разрешаем ЛЮБОЙ порядок для гибкости, но оцениваем компактность
+        positions = [(t[0], t[1]) for t in combo]
+        min_pos = min(p[0] for p in positions)
+        max_pos = max(p[1] for p in positions)
+        
+        # Оцениваем компактность: сколько символов занимает «вхождение» относительно суммы длин слов
+        total_word_len = sum(p[1] - p[0] for p in positions)
+        span_len = max_pos - min_pos
+        
+        if span_len == 0:
+            compactness = 1.0
+        else:
+            # Чем меньше «лишнего» пространства между словами, тем лучше
+            # Максимальный разрешённый span: 100 символов (для вставок вроде «(дизъюнктное)»)
+            if span_len > 150:
+                compactness = 0.0
+            else:
+                compactness = max(0.0, 1.0 - span_len / 150.0)
+        
+        if compactness > 0.0:
+            # Берём падеж ПОСЛЕДНЕГО слова в термине (как наиболее значимого)
+            # или того слова, которое ближе всего к концу «вхождения»
+            last_word_token = combo[-1]
+            results.append((min_pos, max_pos, last_word_token[3], compactness))
+    
+    # Сортируем по компактности (лучшие первые)
+    results.sort(key=lambda x: x[3], reverse=True)
+    return results
+
+
+def _find_all_term_occurrences(term_lemmas, tokens: List) -> List[Tuple[int, int, Optional[str]]]:
+    """
+    Находит все ВОЗМОЖНЫЕ позиции термина в токенах.
+    
+    Для однословных терминов: все прямые вхождения.
+    Для составных терминов: все комбинации слов с разумными промежутками (до 150 символов).
+    Это позволяет находить:
+      - «Объединение (дизъюнктное) графов» (вставка в скобках)
+      - «Стягивание правильного подграфа» (вставка прилагательного)
+      - «вершина ... изолированной» (обратный порядок + промежуток с маркером)
+    
+    Возвращает: список (start_pos, end_pos, case) для каждого возможного вхождения.
+    """
+    is_nested = term_lemmas and isinstance(term_lemmas[0], list)
+    n_words = len(term_lemmas)
+    
+    if n_words == 1:
+        # Однословный термин — ищем все вхождения
+        alts = term_lemmas[0] if is_nested else [term_lemmas[0]]
+        results = []
+        for t in tokens:
+            if t[2] in alts:
+                results.append((t[0], t[1], t[3]))
+        return results
+    else:
+        # Составной термин — ИЩЕМ ВСЕ КОМБИНАЦИИ слов
+        word_token_lists = _find_term_words(term_lemmas, tokens)
+        combinations = _generate_term_combinations(word_token_lists)
+        
+        # Возвращаем без compactness_score (он нужен был только для сортировки)
+        return [(c[0], c[1], c[2]) for c in combinations]
+
+
+def _score_sentence_v2(term_lemmas, sent_data: SentenceData) -> float:
+    """
+    УЛУЧШЕННАЯ версия: оценивает предложение как определение термина.
+    
+    Особенности:
+    1. Для однословных терминов — СТРОГИЕ проверки (чтобы не ловить случайные упоминания)
+    2. Для составных терминов — гибкий поиск: разрешён любой порядок слов, большие промежутки
+    3. Поддержка «перевёрнутых» определений: «вершина называется изолированной»
+       при термине «Изолированная вершина» (слова термина до и после маркера)
+    4. Маркеры: 'называется', 'называются', '— это', 'даёт граф' и др.
     """
     sent, lemma_set, tokens = sent_data
-
-    # Все леммы термина должны присутствовать
-    if not all(tl in lemma_set for tl in term_lemmas):
-        return 0.0
-
-    # Находим первый токен с леммой = term_lemmas[0]
-    first_lemma = term_lemmas[0]
-    first_token = None
-    for t in tokens:
-        if t[2] == first_lemma:
-            first_token = t
-            break
-
-    if first_token is None:
-        return 0.0
-
-    term_start, term_end, _, word_case = first_token
     s_lower = sent.lower()
+    
+    # Определяем тип термина
+    is_nested = term_lemmas and isinstance(term_lemmas[0], list)
+    n_words = len(term_lemmas)
+    is_single_word = (n_words == 1)
 
-    for marker in ['называется', 'называют', 'определяется']:
+    # Проверяем, что все слова термина есть в предложении
+    if is_nested:
+        for word_alts in term_lemmas:
+            if not any(alt in lemma_set for alt in word_alts):
+                return 0.0
+    else:
+        if not all(tl in lemma_set for tl in term_lemmas):
+            return 0.0
+    
+    # ============== МАРКЕРЫ ОПРЕДЕЛЕНИЙ ==============
+    
+    standard_markers = [
+        ('называется', 0.6, 0.75),
+        ('называются', 0.6, 0.75),  # мн.ч.
+        ('называют', 0.6, 0.75),
+        ('определяется', 0.6, 0.75),
+        ('— это', 0.7, 0.8),      # тире-определитель
+        ('--- это', 0.7, 0.8),
+    ]
+    
+    operation_markers = [
+        ('даёт граф', 0.55),
+        ('дает граф', 0.55),
+    ]
+    
+    best_score = 0.0
+    
+    # ============== ЕСЛИ ОДНОСЛОВНЫЙ ТЕРМИН — СТРОГИЕ ПРАВИЛА ==============
+    
+    if is_single_word:
+        # Для однословных терминов ищем все вхождения
+        alts = term_lemmas[0] if is_nested else [term_lemmas[0]]
+        term_occurrences = []
+        for t in tokens:
+            if t[2] in alts:
+                # Токен имеет формат (start, end, lemma, case) — берём только нужные
+                term_occurrences.append((t[0], t[1], t[3]))
+        
+        # Для однословных: очень высокие требования к близости к маркеру
+        # Это чтобы «Вершина» и «Ребро» не находились в определении смежности
+        
+        for marker, pattern1_base, pattern2_base in standard_markers:
+            marker_pos = s_lower.find(marker)
+            if marker_pos < 0:
+                continue
+            marker_end = marker_pos + len(marker)
+            
+            for (term_start, term_end, word_case) in term_occurrences:
+                # ПАТТЕРН 1: термин ПЕРЕД маркером (строгий gap)
+                if term_end <= marker_pos:
+                    gap = marker_pos - term_end
+                    if gap > 50:  # ОЧЕНЬ СТРОГО для однословных!
+                        continue
+                    if word_case in NON_SUBJECT_CASES:
+                        continue
+                    start_bonus = 0.3 if term_start <= 15 else 0.0
+                    gap_factor = max(0.4, 1.0 - gap / 50.0)
+                    score = min(1.0, gap_factor + start_bonus)
+                    if score > best_score:
+                        best_score = score
+                
+                # ПАТТЕРН 2: термин ПОСЛЕ маркером (также строго)
+                if marker_end < term_start:
+                    gap = term_start - marker_end
+                    if gap <= 40:  # Строже, чем для составных
+                        score = pattern2_base + max(0.0, 0.15 - gap / 300.0)
+                        if score > best_score:
+                            best_score = score
+        
+        # Маркеры операций «даёт граф» для однословных обычно не актуальны
+        # (операции — составные термины)
+        
+        return best_score
+    
+    # ============== ЕСЛИ СОСТАВНОЙ ТЕРМИН — ГИБКИЕ ПРАВИЛА ==============
+    
+    # Для составных терминов находим все слова отдельно (для разорванных вхождений)
+    word_token_lists = _find_term_words(term_lemmas, tokens)
+    if not word_token_lists or any(len(wl) == 0 for wl in word_token_lists):
+        return 0.0
+    
+    # Также получаем «компактные» вхождения через старую функцию
+    compact_occurrences = _find_all_term_occurrences(term_lemmas, tokens)
+    
+    # ============== ПРОВЕРКА СТАНДАРТНЫХ МАРКЕРОВ ==============
+    
+    for marker, pattern1_base, pattern2_base in standard_markers:
         marker_pos = s_lower.find(marker)
         if marker_pos < 0:
             continue
         marker_end = marker_pos + len(marker)
+        
+        # --- ПАТТЕРН A: КОМПАКТНОЕ ВХОЖДЕНИЕ (все слова рядом) ---
+        for (term_start, term_end, word_case) in compact_occurrences:
+            # Подпаттерн A1: всё вхождение ПЕРЕД маркером
+            if term_end <= marker_pos:
+                gap = marker_pos - term_end
+                if gap > 120:
+                    continue
+                # Для составных падежная проверка менее строгая (смотрим на последнее слово)
+                start_bonus = 0.3 if term_start <= 15 else 0.1 if term_start <= 40 else 0.0
+                gap_factor = max(0.4, 1.0 - gap / 120.0)
+                score = min(1.0, gap_factor + start_bonus)
+                if score > best_score:
+                    best_score = score
+            
+            # Подпаттерн A2: всё вхождение ПОСЛЕ маркера
+            if marker_end < term_start:
+                gap = term_start - marker_end
+                if gap <= 80:
+                    score = pattern2_base + max(0.0, 0.15 - gap / 600.0)
+                    if score > best_score:
+                        best_score = score
+        
+        # --- ПАТТЕРН B: РАЗОРВАННОЕ ВХОЖДЕНИЕ (перевёрнутое определение) ---
+        # Пример: термин «Изолированная вершина», текст: «вершина называется изолированной»
+        # «вершина» (слово 2 термина) — ДО маркера
+        # «изолированной» (слово 1 термина) — ПОСЛЕ маркера
+        
+        # Идея: проверить, что ЕСТЬ вхождения каждого слова и до, и после маркера
+        words_before = []
+        words_after = []
+        
+        for w, w_tokens in enumerate(word_token_lists):
+            has_before = any(t[1] <= marker_pos for t in w_tokens)
+            has_after = any(t[0] > marker_end for t in w_tokens)
+            if has_before:
+                words_before.append(w)
+            if has_after:
+                words_after.append(w)
+        
+        # Если есть слова и до, и после маркера — это потенциально «перевёрнутое» определение
+        if len(words_before) > 0 and len(words_after) > 0:
+            # Дополнительно: проверим, что распределение логичное
+            # Например, для «Изолированная вершина» («прил. + сущ.»):
+            #   В тексте: «сущ. называется прил._твор.»
+            #   Существительное (второе слово термина) — ДО маркера
+            #   Прилагательное (первое слово термина) — ПОСЛЕ маркера
+            
+            # Найдём ближайшее вхождение слова ДО маркера и ближайшее ПОСЛЕ
+            min_dist_before = float('inf')
+            min_dist_after = float('inf')
+            
+            for w_tokens in word_token_lists:
+                for t in w_tokens:
+                    if t[1] <= marker_pos:
+                        dist = marker_pos - t[1]
+                        if dist < min_dist_before:
+                            min_dist_before = dist
+                    if t[0] > marker_end:
+                        dist = t[0] - marker_end
+                        if dist < min_dist_after:
+                            min_dist_after = dist
+            
+            # Если оба расстояния разумные — высокий score
+            if min_dist_before < 80 and min_dist_after < 80:
+                # Чем меньше суммарное расстояние — тем лучше
+                total_gap = min_dist_before + min_dist_after
+                gap_factor = max(0.5, 1.0 - total_gap / 160.0)
+                # Бонус за «перевёрнутое» определение (часто это именно определение!)
+                inversion_bonus = 0.15
+                score = min(1.0, 0.7 + gap_factor * 0.2 + inversion_bonus)
+                if score > best_score:
+                    best_score = score
+    
+    # ============== ПРОВЕРКА МАРКЕРОВ ОПЕРАЦИЙ «даёт граф» ==============
+    
+    for marker, base_score in operation_markers:
+        marker_pos = s_lower.find(marker)
+        if marker_pos < 0:
+            continue
+        
+        # Для операций термин должен быть ПЕРЕД «даёт граф»
+        # Используем компактные вхождения
+        for (term_start, term_end, _) in compact_occurrences:
+            if term_end <= marker_pos:
+                gap = marker_pos - term_end
+                if gap < 250:  # Операции могут иметь длинные условия
+                    score = base_score + max(0.0, 0.15 - gap / 1800.0)
+                    if score > best_score:
+                        best_score = score
+    
+    return best_score
 
-        # Паттерн 1: термин ПЕРЕД маркером
-        if term_end <= marker_pos:
-            gap = marker_pos - term_end
-            if gap > 80:
-                continue
-            # Генитив/датив/локатив/аккузатив → не субъект → пропускаем
-            if word_case in NON_SUBJECT_CASES:
-                continue
-            start_bonus = 0.3 if term_start <= 10 else 0.0
-            return min(1.0, max(0.4, 1.0 - gap / 100.0) + start_bonus)
 
-        # Паттерн 2: термин ПОСЛЕ маркера (≤15 символов)
-        if marker_end < term_start and term_start - marker_end <= 15:
-            return 0.75
-
-    return 0.0
+def _score_sentence(term_lemmas, sent_data: SentenceData) -> float:
+    """Обёртка: вызывает улучшенную v2 версию."""
+    return _score_sentence_v2(term_lemmas, sent_data)
 
 
 # ──────────────────────── Retriever ──────────────────────────────────────────
@@ -356,6 +651,31 @@ class Retriever:
         """Свойство для обратной совместимости: возвращает список текстов чанков."""
         return [c.text for c in self._chunks]
 
+    # ── Ручные определения для проблемных терминов ────────────────────────────
+
+    # ── Ручные определения для терминов, которые НЕЛЬЗЯ извлечь автоматически ──
+    # 
+    # Причина: в тексте учебника нет явного определения с маркером для этих понятий:
+    # - Вершина, Ребро — определяются только неявно через множества V и E в определении Графа
+    # - Перестановка — используется в тексте, но явно не определяется
+    #
+    # Все остальные 18 из бывших MANUAL_DEFS теперь извлекаются автоматически.
+    
+    MANUAL_DEFS = {
+        'Вершина': (
+            'Вершина (или узел) — базовый элемент графа; '
+            'непустое множество V называется множеством вершин графа G(V, E).'
+        ),
+        'Ребро': (
+            'Ребро — элемент множества E двухэлементных подмножеств множества V; '
+            'соединяет две вершины графа.'
+        ),
+        'Перестановка': (
+            'Перестановка — взаимно однозначное отображение '
+            'конечного множества на себя.'
+        ),
+    }
+
     # ── Построение индекса определений ──────────────────────────────────────
 
     def _build_term_index(self):
@@ -365,11 +685,21 @@ class Retriever:
         """
         self.term_index: Dict[str, Dict] = {}
 
-        # Предвычисляем леммы терминов
+        # Предвычисляем леммы терминов (со всеми вариантами от pymorphy3)
         term_lemmas_map = {}
         for term in self.terms:
-            tl = [_parse_word(w)[0] for w in term.lower().split()]
-            term_lemmas_map[term] = tl
+            words = term.lower().split()
+            word_alts = []  # список списков: для каждого слова — все варианты лемм
+            for w in words:
+                alts = set()
+                lemma, _ = _parse_word(w)
+                alts.add(lemma)
+                for p in morph.parse(w):
+                    alt = p.normal_form
+                    if len(alt) > 2:
+                        alts.add(alt)
+                word_alts.append(list(alts))
+            term_lemmas_map[term] = word_alts
 
         for term in self.terms:
             term_lemmas = term_lemmas_map[term]
@@ -379,12 +709,26 @@ class Retriever:
                 for sent_data in sent_list:
                     score = _score_sentence(term_lemmas, sent_data)
                     if score >= 0.5:
-                        self.term_index[term] = {
-                            'text': self.chunks[i],
-                            'score': 0.42,
-                            'chunk_id': i,
-                            'def_score': score,
-                        }
+                        sent_text = sent_data[0]
+                        # Ищем название параграфа — первые 1-2 предложения чанка
+                        chunk = self._chunks[i]
+                        prefix = chunk.text[:chunk.text.index(sent_text)] if sent_text in chunk.text else ''
+                        if prefix.strip():
+                            title_part = prefix.strip()[:150]
+                            self.term_index[term] = {
+                                'text': sent_text,
+                                'title': title_part,
+                                'score': 0.42,
+                                'chunk_id': i,
+                                'def_score': score,
+                            }
+                        else:
+                            self.term_index[term] = {
+                                'text': sent_text,
+                                'score': 0.42,
+                                'chunk_id': i,
+                                'def_score': score,
+                            }
                         found = True
                         break
                 if found:
@@ -393,7 +737,24 @@ class Retriever:
             if not found:
                 results = self._tfidf_search(term, top_k=1)
                 if results:
-                    self.term_index[term] = results[0]
+                    txt = results[0].get('text', '')
+                    # Берём первое предложение результата как определение
+                    first_sent = txt.split('.')[0] + '.' if '.' in txt else txt
+                    self.term_index[term] = {
+                        'text': first_sent,
+                        'score': results[0].get('score', 0.3),
+                        'chunk_id': results[0].get('chunk_id', 0),
+                        'def_score': 0.0,
+                    }
+
+        # Ручные переопределения для терминов, которые нельзя извлечь автоматически
+        for term, def_text in self.MANUAL_DEFS.items():
+            self.term_index[term] = {
+                'text': def_text,
+                'score': 0.5,
+                'chunk_id': 0,
+                'def_score': 1.0,
+            }
 
         indexed = sum(1 for v in self.term_index.values() if v.get('def_score', 0) >= 0.5)
         print(f'[Retriever] Индекс: {len(self.term_index)} терминов ({indexed} точных)')
@@ -462,28 +823,51 @@ class Retriever:
         """
         Поиск с возвратом SearchResult.
 
-        1. TF-IDF поиск (через _tfidf_search)
-        2. Бустинг заголовков: query содержит название заголовка чанка → ×1.5
-        3. Бустинг терминов: query совпадает с термином из terms.txt → ×1.3
-        4. Сортировка по убыванию score, возврат топ-k
+        1. Определяем термин в запросе → ищем в term_index
+        2. TF-IDF поиск (через _tfidf_search)
+        3. Бустинг заголовков: query содержит название заголовка чанка → ×1.5
+        4. Бустинг терминов: query совпадает с термином из terms.txt → ×1.3
+        5. Если найден термин в term_index — форсируем его на top с высоким score
+        6. Сортировка по убыванию score, возврат топ-k
         """
-        # 1. TF-IDF (берём с запасом, чтобы после бустинга не потерять релевантные)
-        tfidf_results = self._tfidf_search(query, top_k=top_k * 2)
-
         query_lower = query.lower()
         detected_term = self._detect_term_in_query(query)
 
+        # 1. TF-IDF (берём с запасом)
+        tfidf_results = self._tfidf_search(query, top_k=top_k * 2)
+
         results: List[SearchResult] = []
+        seen_chunk_ids: set = set()
+
+        # 2. Если обнаружен термин из term_index — добавляем его принудительно
+        if detected_term and detected_term in self.term_index:
+            term_data = self.term_index[detected_term]
+            chunk_id = term_data.get('chunk_id')
+            if chunk_id is not None and 0 <= chunk_id < len(self._chunks):
+                chunk = self._chunks[chunk_id]
+                # Высокий score для точного совпадения термина
+                term_score = max(0.6, term_data.get('score', 0.5))
+                results.append(SearchResult(
+                    chunk=chunk,
+                    score=term_score,
+                    term_match=detected_term,
+                ))
+                seen_chunk_ids.add(chunk_id)
+
+        # 3. Обрабатываем TF-IDF результаты
         for r in tfidf_results:
-            chunk = self._chunks[r['chunk_id']]
+            chunk_id = r['chunk_id']
+            if chunk_id in seen_chunk_ids:
+                continue
+            chunk = self._chunks[chunk_id]
             score = r['score']
             term_match: Optional[str] = None
 
-            # 2. Бустинг заголовка
+            # Бустинг заголовка
             if chunk.title.lower() in query_lower:
                 score *= 1.5
 
-            # 3. Бустинг термина
+            # Бустинг термина
             if detected_term:
                 score *= 1.3
                 term_match = detected_term
@@ -493,6 +877,7 @@ class Retriever:
                 score=score,
                 term_match=term_match,
             ))
+            seen_chunk_ids.add(chunk_id)
 
         # 4. Сортировка и топ-k
         results.sort(key=lambda x: x.score, reverse=True)

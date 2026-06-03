@@ -26,6 +26,9 @@ class QuestionData:
     options: Optional[List[str]] = None
     context_source: str = ""
     llm_improved: bool = False
+    # Дополнительные поля для улучшенной работы
+    truth_value: Optional[str] = None  # Для true_false: "Верно" или "Неверно" (для валидации)
+    display_answer: Optional[str] = None  # Ответ для показа пользователю (если отличается от correct_answer)
 
 
 @dataclass
@@ -49,6 +52,36 @@ class TestResults:
 
 
 @dataclass
+class TermProgress:
+    """Прогресс по отдельному термину."""
+    term: str
+    asked_count: int = 0           # сколько раз спрашивали
+    correct_count: int = 0         # сколько верно
+    last_asked: Optional[float] = None  # когда последний раз
+    question_types_used: set = field(default_factory=set)  # какие типы вопросов уже были
+    
+    @property
+    def is_learned(self) -> bool:
+        """Критерий 'изучен': хотя бы 1 правильный ответ."""
+        return self.correct_count >= 1
+    
+    @property
+    def status(self) -> str:
+        """Статус термина: 'not_asked' | 'in_progress' | 'learned'."""
+        if self.asked_count == 0:
+            return 'not_asked'
+        if self.is_learned:
+            return 'learned'
+        return 'in_progress'
+    
+    @property
+    def success_rate(self) -> float:
+        if self.asked_count == 0:
+            return 0.0
+        return self.correct_count / self.asked_count
+
+
+@dataclass
 class SessionState:
     session_id: str
     created_at: float
@@ -65,6 +98,13 @@ class SessionState:
     test_started_at: Optional[float] = None
     test_completed: bool = False
     test_results: Optional[TestResults] = None
+    
+    # ПРОГРЕСС ПО ТЕРМИНАМ (НОВОЕ)
+    term_progress: Dict[str, TermProgress] = field(default_factory=dict)
+    
+    # ОБЩАЯ СТАТИСТИКА (НОВОЕ)
+    total_questions_asked: int = 0
+    total_correct: int = 0
 
 
 def generate_session_id() -> str:
@@ -121,3 +161,57 @@ class SessionManager:
     @property
     def active_sessions(self) -> int:
         return len(self._sessions)
+    
+    # ── Методы для работы с прогрессом терминов ──────────────────────────────
+    
+    def get_or_create_term_progress(self, session_id: str, term: str) -> TermProgress:
+        """Получить или создать прогресс по термину для сессии."""
+        state = self.get(session_id)
+        if not state:
+            # Создаём пустой прогресс, если сессии нет (крайний случай)
+            return TermProgress(term=term)
+        
+        if term not in state.term_progress:
+            state.term_progress[term] = TermProgress(term=term)
+        
+        return state.term_progress[term]
+    
+    def update_term_progress(self, session_id: str, term: str, is_correct: bool, 
+                             question_type: Optional[str] = None) -> TermProgress:
+        """
+        Обновить прогресс по термину после ответа на вопрос.
+        
+        Args:
+            session_id: ID сессии
+            term: термин, который спрашивали
+            is_correct: верно ли ответил пользователь
+            question_type: тип вопроса (definition, true_false и т.д.)
+        
+        Returns:
+            Обновлённый TermProgress
+        """
+        tp = self.get_or_create_term_progress(session_id, term)
+        
+        tp.asked_count += 1
+        if is_correct:
+            tp.correct_count += 1
+        tp.last_asked = time.time()
+        
+        if question_type:
+            tp.question_types_used.add(question_type)
+        
+        # Также обновляем общую статистику
+        state = self.get(session_id)
+        if state:
+            state.total_questions_asked += 1
+            if is_correct:
+                state.total_correct += 1
+        
+        return tp
+    
+    def get_term_progress_dict(self, session_id: str) -> Dict[str, TermProgress]:
+        """Получить весь прогресс по терминам для сессии."""
+        state = self.get(session_id)
+        if not state:
+            return {}
+        return state.term_progress
