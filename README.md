@@ -1,5 +1,9 @@
 # RAG по теории графов
 
+[![CI](https://github.com/spv-asina/RAG/actions/workflows/ci.yml/badge.svg)](https://github.com/spv-asina/RAG/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 **Retrieval-Augmented Generation** система по дискретной математике (теория графов) с вопросно-ответным чатом по учебнику и интерактивным генератором тестов.
 
 Система ищет ответы в учебнике через TF-IDF и морфологический анализ (pymorphy3), а при наличии локальной LLM (Qwen 2.5 7B) улучшает формулировки вопросов и ответов. Без LLM система полностью работоспособна на шаблонах и TF-IDF — graceful degradation.
@@ -561,4 +565,4 @@ curl http://localhost:5000/health
 
 ## Лицензия
 
-Проект предназначен для образовательных целей.
+Проект распространяется под лицензией MIT. Подробнее — в файле [LICENSE](LICENSE).
