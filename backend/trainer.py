@@ -13,7 +13,7 @@
   Trainer          — основной интерфейс (обёртка над Generator + Validator)
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Optional, Dict, Tuple
 import random
 import re
@@ -176,7 +176,7 @@ def _replace_term_morph(term: str, replacement: str, text: str) -> str:
                 # Берём первый значимый разбор первого слова из текста
                 original_tag = None
                 for p in first_parsed:
-                    if p.tag.case and not p.tag.POS in {'PREP', 'CONJ', 'PRCL', 'INTJ'}:
+                    if p.tag.case and p.tag.POS not in {'PREP', 'CONJ', 'PRCL', 'INTJ'}:
                         original_tag = p.tag
                         break
                 
