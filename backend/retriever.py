@@ -189,7 +189,7 @@ def segment_chapter(text: str, terms: Optional[List[str]] = None) -> List[Chunk]
     # Склеиваем строки внутри каждого абзаца
     merged_paragraphs = []
     for p in paragraphs:
-        lines = [l.strip() for l in p.split('\n') if l.strip()]
+        lines = [line.strip() for line in p.split('\n') if line.strip()]
         if lines:
             merged_paragraphs.append(' '.join(lines))
 
@@ -329,8 +329,6 @@ def _generate_term_combinations(word_token_lists: List[List]) -> List[Tuple[int,
     """
     from itertools import product
     
-    n_words = len(word_token_lists)
-    
     # Проверяем, есть ли вхождения для всех слов
     for w, w_tokens in enumerate(word_token_lists):
         if not w_tokens:
@@ -349,7 +347,6 @@ def _generate_term_combinations(word_token_lists: List[List]) -> List[Tuple[int,
         max_pos = max(p[1] for p in positions)
         
         # Оцениваем компактность: сколько символов занимает «вхождение» относительно суммы длин слов
-        total_word_len = sum(p[1] - p[0] for p in positions)
         span_len = max_pos - min_pos
         
         if span_len == 0:

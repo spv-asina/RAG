@@ -4,8 +4,6 @@ RAG-система по Дискретной Математике (Теория 
 """
 
 import os
-import re
-import json
 import random
 import uuid
 import time
@@ -43,7 +41,7 @@ def _get_session_id():
 @app.route("/api/session/init", methods=["POST"])
 def api_session_init():
     """Инициализация сессии."""
-    data = request.get_json(silent=True) or {}
+    request.get_json(silent=True)
     sid = _get_session_id()
     return jsonify({
         "status": "ok",

@@ -247,9 +247,9 @@ class LLMService:
 
         if result:
             lines = [
-                l.strip().lstrip("0123456789.-) ")
-                for l in result.split("\n")
-                if l.strip()
+                line.strip().lstrip("0123456789.-) ")
+                for line in result.split("\n")
+                if line.strip()
             ]
             # Проверяем, что дистракторы не совпадают с правильным определением
             filtered = []

@@ -6,7 +6,7 @@ session.py — Управление сессиями (одна вкладка = 
 
 import uuid
 import time
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 
 
