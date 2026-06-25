@@ -7,7 +7,7 @@ Flask раздаёт и API (/ask, /trainer/*) и статику (frontend/index
 import sys
 import os
 import time
-from typing import Optional, List, Dict, Tuple
+from typing import Optional
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'backend'))
 
